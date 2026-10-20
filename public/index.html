@@ -44,26 +44,26 @@
 
           <section v-if="result" class="today-summary" aria-labelledby="city-name">
             <h2 id="city-name" class="city-name">{{ cityLabel }}</h2>
-            <p class="day-label">{{ formatDate(result.days[0].date) }}</p>
+            <p class="day-label">{{ formatDate(result.today.date) }}</p>
             <div class="current-condition">
               <svg class="weather-icon" viewBox="0 0 128 128" width="144" height="144" aria-hidden="true">
-                <use :href="'/weather-icons.svg#' + weatherIcon(result.days[0].icon)"></use>
+                <use :href="'/weather-icons.svg#' + weatherIcon(result.today.icon)"></use>
               </svg>
-              <p>{{ result.days[0].conditionDescription }}</p>
+              <p>{{ result.today.conditionDescription }}</p>
             </div>
             <p class="average-temperature">
-              {{ formatTemperature(result.days[0].averageTemperature) }}
+              {{ formatTemperature(result.today.averageTemperature) }}
             </p>
             <p class="average-label">Average temperature</p>
             <p
               class="temperature-category"
-              :class="'category-' + result.days[0].temperatureCategory.toLowerCase()"
+              :class="'category-' + result.today.temperatureCategory.toLowerCase()"
             >
-              {{ result.days[0].temperatureCategory }}
+              {{ result.today.temperatureCategory }}
             </p>
             <div class="high-low">
-              <span>Low <strong>{{ formatTemperature(result.days[0].minTemperature) }}</strong></span>
-              <span>High <strong>{{ formatTemperature(result.days[0].maxTemperature) }}</strong></span>
+              <span>Low <strong>{{ formatTemperature(result.today.minTemperature) }}</strong></span>
+              <span>High <strong>{{ formatTemperature(result.today.maxTemperature) }}</strong></span>
             </div>
           </section>
           <p v-else class="side-empty">

@@ -24,4 +24,4 @@ Vue is loaded from a CDN, so the browser needs an internet connection on first l
 - public/app.js sends a same-origin Fetch request and displays the returned JSON.
 - public/style.css holds the responsive layout and visual styles.
 
-The server uses OpenWeather Geocoding to find coordinates, then requests the five-day/three-hour forecast and current air-pollution reading. It groups the forecast into the first three local calendar days.
+The server uses OpenWeather Geocoding to find coordinates, then requests the five-day/three-hour forecast and current air-pollution reading. It keeps the first local forecast day for the sidebar and shows the following three local forecast days in the table.

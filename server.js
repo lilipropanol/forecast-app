@@ -1,14 +1,18 @@
 const express = require("express");
 const path = require("node:path");
 
+// Create the Express app and choose where it listens for browser requests.
 const app = express();
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || "127.0.0.1";
 
+// Main route: receive a city, get its weather, and return one JSON response.
 app.get("/api/weather", async (req, res) => {
+  // Read the city from a URL like /api/weather?city=Dublin.
   const city = typeof req.query.city === "string" ? req.query.city.trim() : "";
   const apiKey = process.env.OPENWEATHER_API_KEY;
 
+  // Stop early if the browser did not send a usable city name.
   if (!city || city.length > 100) {
     return res.status(400).json({
       error: "Enter a city name, optionally followed by a country code."
@@ -22,6 +26,7 @@ app.get("/api/weather", async (req, res) => {
   }
 
   try {
+    // OpenWeather's forecast endpoint uses coordinates, so look up the city first.
     const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
     locationUrl.search = new URLSearchParams({ q: city, limit: "1", appid: apiKey });
     const matches = await getOpenWeatherJson(locationUrl);
@@ -41,14 +46,24 @@ app.get("/api/weather", async (req, res) => {
       appid: apiKey
     });
     const forecast = await getOpenWeatherJson(forecastUrl);
-    const days = makeThreeDaySummary(forecast.list || [], forecast.city.timezone || 0);
 
-    if (days.length === 0) {
+    // OpenWeather gives readings every three hours. Group them by local date.
+    const dailySummaries = makeDailySummaries(
+      forecast.list || [],
+      forecast.city.timezone || 0
+    );
+
+    // Keep the first forecast date for the sidebar and the next three for the table.
+    const today = dailySummaries[0];
+    const days = dailySummaries.slice(1, 4);
+
+    if (!today || days.length === 0) {
       return res.status(502).json({
         error: "OpenWeather returned no forecast readings for this city. Please try again."
       });
     }
 
+    // Air quality is a separate API request. If it fails, keep the weather forecast.
     let airQuality;
     try {
       const airUrl = new URL("https://api.openweathermap.org/data/2.5/air_pollution");
@@ -73,12 +88,14 @@ app.get("/api/weather", async (req, res) => {
       };
     }
 
+    // Send the data the browser needs to render the page.
     return res.json({
       city: {
         name: place.name,
         state: place.state || "",
         country: place.country || ""
       },
+      today,
       days,
       packing: makePackingAdvice(days),
       airQuality,
@@ -125,6 +142,7 @@ async function getOpenWeatherJson(url) {
   return data;
 }
 
+// Turn technical API failures into short messages the page can display.
 function messageForApiError(error, dataName) {
   if (error.isNetworkError) {
     return "I couldn't reach OpenWeather. Check your connection and try again.";
@@ -141,7 +159,8 @@ function messageForApiError(error, dataName) {
   return "I couldn't load " + dataName + " from OpenWeather. Please try again.";
 }
 
-function makeThreeDaySummary(readings, timezoneOffset) {
+// Combine all three-hour readings for each local calendar date into one daily summary.
+function makeDailySummaries(readings, timezoneOffset) {
   const daysByDate = new Map();
 
   for (const reading of readings) {
@@ -154,46 +173,44 @@ function makeThreeDaySummary(readings, timezoneOffset) {
     daysByDate.get(date).push(reading);
   }
 
-  return Array.from(daysByDate.entries())
-    .slice(0, 3)
-    .map(([date, points]) => {
-      const representativePoint = points[Math.floor(points.length / 2)];
-      const condition = representativePoint.weather?.[0] || {};
-      const temperatures = points.map((point) => point.main.temp);
-      const lows = points.map((point) => point.main.temp_min ?? point.main.temp);
-      const highs = points.map((point) => point.main.temp_max ?? point.main.temp);
-      const windSpeeds = points.map((point) => point.wind.speed);
-      const rainfall = points.reduce((total, point) => {
-        return total + (point.rain && point.rain["3h"] ? point.rain["3h"] : 0);
-      }, 0);
-      const averageTemperature =
-        temperatures.reduce((total, temperature) => total + temperature, 0) /
-        temperatures.length;
-      const averageWindSpeed =
-        windSpeeds.reduce((total, speed) => total + speed, 0) / windSpeeds.length;
-      const rainExpected = points.some((point) => {
-        const mainWeather = point.weather?.[0]?.main;
-        return (
-          (point.rain && point.rain["3h"] > 0) ||
-          mainWeather === "Rain" ||
-          mainWeather === "Drizzle" ||
-          mainWeather === "Thunderstorm"
-        );
-      });
-
-      return {
-        date,
-        icon: condition.icon || "03d",
-        conditionDescription: condition.description || "Cloudy",
-        minTemperature: Math.min(...lows),
-        maxTemperature: Math.max(...highs),
-        averageTemperature,
-        temperatureCategory: getTemperatureCategory(averageTemperature),
-        averageWindSpeed,
-        rainfall,
-        rainExpected
-      };
+  return Array.from(daysByDate.entries()).map(([date, points]) => {
+    const representativePoint = points[Math.floor(points.length / 2)];
+    const condition = representativePoint.weather?.[0] || {};
+    const temperatures = points.map((point) => point.main.temp);
+    const lows = points.map((point) => point.main.temp_min ?? point.main.temp);
+    const highs = points.map((point) => point.main.temp_max ?? point.main.temp);
+    const windSpeeds = points.map((point) => point.wind.speed);
+    const rainfall = points.reduce((total, point) => {
+      return total + (point.rain && point.rain["3h"] ? point.rain["3h"] : 0);
+    }, 0);
+    const averageTemperature =
+      temperatures.reduce((total, temperature) => total + temperature, 0) /
+      temperatures.length;
+    const averageWindSpeed =
+      windSpeeds.reduce((total, speed) => total + speed, 0) / windSpeeds.length;
+    const rainExpected = points.some((point) => {
+      const mainWeather = point.weather?.[0]?.main;
+      return (
+        (point.rain && point.rain["3h"] > 0) ||
+        mainWeather === "Rain" ||
+        mainWeather === "Drizzle" ||
+        mainWeather === "Thunderstorm"
+      );
     });
+
+    return {
+      date,
+      icon: condition.icon || "03d",
+      conditionDescription: condition.description || "Cloudy",
+      minTemperature: Math.min(...lows),
+      maxTemperature: Math.max(...highs),
+      averageTemperature,
+      temperatureCategory: getTemperatureCategory(averageTemperature),
+      averageWindSpeed,
+      rainfall,
+      rainExpected
+    };
+  });
 }
 
 function getTemperatureCategory(temperature) {
@@ -202,6 +219,7 @@ function getTemperatureCategory(temperature) {
   return "Hot";
 }
 
+// Choose clothing advice from the temperatures and rain in the next three days.
 function makePackingAdvice(days) {
   const categories = [...new Set(days.map((day) => day.temperatureCategory))];
   let temperatureAdvice;
@@ -228,6 +246,7 @@ function makePackingAdvice(days) {
   };
 }
 
+// Convert OpenWeather's air-quality data into a label and any pollutant warnings.
 function makeAirQualitySummary(reading) {
   const aqiLabels = ["", "Good", "Fair", "Moderate", "Poor", "Very poor"];
   const pollutants = [
