@@ -19,9 +19,11 @@ Vue is loaded from a CDN, so the browser needs an internet connection on first l
 
 ## Structure
 
-- server.js serves the page and provides GET /api/weather?city=...
+- server.js serves the page and provides GET /api/weather?city=... and GET /api/compare?cities=...
 - public/index.html contains the page structure and Vue directives.
 - public/app.js sends a same-origin Fetch request and displays the returned JSON.
 - public/style.css holds the responsive layout and visual styles.
 
 The server uses OpenWeather Geocoding to find coordinates, then requests the five-day/three-hour forecast and current air-pollution reading. It keeps the first local forecast day for the sidebar and shows the following three local forecast days in the table.
+
+The comparison endpoint accepts two city values, for example `GET /api/compare?cities=Dublin,Lisbon`. It loads both forecasts in parallel and returns the two city results with a weather, rain and air-quality comparison. The page sends repeated `cities` parameters so country codes containing commas can be used, such as Dublin, IE and Lisbon, PT.

@@ -36,7 +36,7 @@
               aria-describedby="city-hint"
               required
             />
-            <button type="submit" :disabled="loading || !city.trim()">Search</button>
+            <button type="submit" :disabled="loading || comparing || !city.trim()">Search</button>
             <p id="city-hint" class="search-hint">
               Add a country code if the city name is shared.
             </p>
@@ -186,6 +186,121 @@
                 </ul>
               </section>
             </div>
+
+            <section class="comparison-section" aria-labelledby="comparison-title">
+              <div class="comparison-heading">
+                <h2 id="comparison-title">Compare another city</h2>
+                <p>See how its next three days compare.</p>
+              </div>
+
+              <form class="comparison-form" @submit.prevent="compareCities" :aria-busy="comparing">
+                <label for="comparison-city">Second destination</label>
+                <div class="comparison-input-row">
+                  <input
+                    id="comparison-city"
+                    v-model.trim="comparisonCity"
+                    type="search"
+                    name="comparisonCity"
+                    maxlength="100"
+                    autocomplete="off"
+                    placeholder="Lisbon, PT"
+                    required
+                  />
+                  <button type="submit" :disabled="comparing || !comparisonCity.trim()">
+                    {{ comparing ? "Comparing..." : "Compare" }}
+                  </button>
+                </div>
+                <p class="search-hint">Add a country code if the city name is shared.</p>
+              </form>
+
+              <p v-if="comparing" class="comparison-message" aria-live="polite">
+                Loading both forecasts...
+              </p>
+              <p v-if="comparisonError" class="comparison-message comparison-error" role="alert">
+                {{ comparisonError }}
+              </p>
+
+              <div v-if="comparisonResult" class="comparison-results">
+                <div class="comparison-verdict">
+                  <h3>Weather verdict</h3>
+                  <p aria-live="polite">{{ comparisonResult.comparison.verdict }}</p>
+                  <span>
+                    Average temperatures differ by
+                    {{ formatTemperature(comparisonResult.comparison.temperatureDifference) }}.
+                  </span>
+                </div>
+
+                <p
+                  v-if="!comparisonResult.destinations[0].hasThreeDays || !comparisonResult.destinations[1].hasThreeDays"
+                  class="notice comparison-notice"
+                >
+                  One city has fewer than three forecast days available. The available days are shown.
+                </p>
+
+                <div class="comparison-grid">
+                  <article
+                    v-for="(destination, index) in comparisonResult.destinations"
+                    :key="destination.city.name + destination.city.country + index"
+                    class="comparison-card"
+                    :class="{ 'comparison-card-winner': index === comparisonResult.comparison.betterWeatherIndex }"
+                  >
+                    <div class="comparison-card-heading">
+                      <h3>{{ formatCityName(destination.city) }}</h3>
+                      <span
+                        v-if="index === comparisonResult.comparison.betterWeatherIndex"
+                        class="winner-label"
+                      >
+                        Better forecast
+                      </span>
+                    </div>
+
+                    <dl class="comparison-metrics">
+                      <div>
+                        <dt>Average temperature</dt>
+                        <dd>{{ formatTemperature(comparisonResult.comparison.metrics[index].averageTemperature) }}</dd>
+                      </div>
+                      <div>
+                        <dt>Rainy days</dt>
+                        <dd>
+                          {{ comparisonResult.comparison.metrics[index].rainDays }} /
+                          {{ destination.days.length }}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Air quality</dt>
+                        <dd v-if="destination.airQuality.available">
+                          {{ destination.airQuality.aqiLabel }} · AQI {{ destination.airQuality.aqi }}/5
+                          <span
+                            v-if="index === comparisonResult.comparison.worseAirIndex"
+                            class="worse-air-label"
+                          >
+                            Worse
+                          </span>
+                        </dd>
+                        <dd v-else>Unavailable</dd>
+                      </div>
+                    </dl>
+
+                    <ul class="comparison-days" :aria-label="formatCityName(destination.city) + ' forecast'">
+                      <li v-for="day in destination.days" :key="day.date">
+                        <span class="comparison-day-date">{{ formatShortDate(day.date) }}</span>
+                        <svg class="weather-icon" viewBox="0 0 128 128" width="40" height="40" aria-hidden="true">
+                          <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
+                        </svg>
+                        <span class="comparison-day-condition">{{ day.conditionDescription }}</span>
+                        <span class="comparison-day-temperature">
+                          {{ formatTemperature(day.minTemperature) }} – {{ formatTemperature(day.maxTemperature) }}
+                        </span>
+                        <span class="comparison-day-details">
+                          {{ formatNumber(day.averageWindSpeed) }} m/s wind ·
+                          {{ formatRainfall(day.rainfall) }} mm rain
+                        </span>
+                      </li>
+                    </ul>
+                  </article>
+                </div>
+              </div>
+            </section>
           </div>
         </main>
       </div>

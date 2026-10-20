@@ -4,7 +4,11 @@ const app = Vue.createApp({
       city: "",
       result: null,
       error: "",
-      loading: false
+      loading: false,
+      comparisonCity: "",
+      comparisonResult: null,
+      comparisonError: "",
+      comparing: false
     };
   },
   computed: {
@@ -21,17 +25,19 @@ const app = Vue.createApp({
   methods: {
     async searchWeather() {
       const searchCity = this.city.trim();
-      if (!searchCity || this.loading) {
+      if (!searchCity || this.loading || this.comparing) {
         return;
       }
 
       this.loading = true;
       this.error = "";
       this.result = null;
+      this.comparisonResult = null;
+      this.comparisonError = "";
 
       try {
         const response = await fetch("/api/weather?city=" + encodeURIComponent(searchCity));
-        const data = await response.json();
+        const data = await this.readJsonResponse(response);
         if (!response.ok) {
           throw new Error(data.error || "The weather request failed. Please try again.");
         }
@@ -44,10 +50,60 @@ const app = Vue.createApp({
         this.loading = false;
       }
     },
+    formatCityName(city) {
+      return [city.name, city.state, city.country].filter(Boolean).join(", ");
+    },
+    async readJsonResponse(response) {
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(
+          "The server returned a web page instead of JSON. Start or restart the app with `npm start` from the project folder, then reload this page."
+        );
+      }
+      return response.json();
+    },
+    async compareCities() {
+      const secondCity = this.comparisonCity.trim();
+      if (!this.result || !secondCity || this.comparing || this.loading) {
+        return;
+      }
+
+      this.comparing = true;
+      this.comparisonError = "";
+      this.comparisonResult = null;
+
+      const params = new URLSearchParams();
+      params.append("cities", this.cityLabel);
+      params.append("cities", secondCity);
+
+      try {
+        const response = await fetch("/api/compare?" + params.toString());
+        const data = await this.readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(data.error || "The city comparison failed. Please try again.");
+        }
+        this.comparisonResult = data;
+      } catch (requestError) {
+        this.comparisonError =
+          requestError.message ||
+          "I couldn't reach the weather server. Check your connection and try again.";
+      } finally {
+        this.comparing = false;
+      }
+    },
     formatDate(dateString) {
       const date = new Date(dateString + "T12:00:00Z");
       return new Intl.DateTimeFormat("en-IE", {
         weekday: "long",
+        day: "numeric",
+        month: "short",
+        timeZone: "UTC"
+      }).format(date);
+    },
+    formatShortDate(dateString) {
+      const date = new Date(dateString + "T12:00:00Z");
+      return new Intl.DateTimeFormat("en-IE", {
+        weekday: "short",
         day: "numeric",
         month: "short",
         timeZone: "UTC"
