@@ -1,0 +1,22 @@
+flowchart LR
+    subgraph Browser
+        V["Vue 3 app<br/>reactive state → template"]
+    end
+    subgraph Server["Node 22 + Express"]
+        S["express.static<br/>/public"]
+        W["GET /api/weather"]
+        C["GET /api/compare"]
+        K[(".env<br/>API key")]
+    end
+    subgraph OW["OpenWeather"]
+        G["Geocoding"]
+        F["Forecast"]
+        A["Air Pollution"]
+    end
+    V -- "HTML, JS, CSS" --- S
+    V -- "fetch, JSON<br/>same origin" --> W
+    V -- "fetch, JSON<br/>same origin" --> C
+    W --> G --> F --> A
+    C -- "×2 in parallel" --> G
+    K -.-> W
+    K -.-> C
