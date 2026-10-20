@@ -1,0 +1,14 @@
+node_modules/
+.env
+npm-debug.log*
+
+# Local agent skills and design references
+.taste-skill/
+.agents/
+.codex/
+.aws/
+awesome-design-md/
+
+# Assignment materials and working report
+resources(temp)/
+REPORT_DRAFT.md

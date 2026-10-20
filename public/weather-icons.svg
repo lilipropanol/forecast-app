@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="sun" viewBox="0 0 128 128">
+    <g fill="none" stroke="#D8B247" stroke-linecap="round" stroke-width="6">
+      <path d="M64 10v14M64 104v14M10 64h14M104 64h14M26 26l10 10M92 92l10 10M102 26 92 36M36 92 26 102" />
+    </g>
+    <circle cx="64" cy="64" r="32" fill="#F2CF68" />
+  </symbol>
+
+  <symbol id="moon" viewBox="0 0 128 128">
+    <path d="M91 19a49 49 0 1 0 18 89A51 51 0 0 1 91 19Z" fill="#E7C96F" />
+  </symbol>
+
+  <symbol id="partly-cloudy-day" viewBox="0 0 128 128">
+    <g fill="none" stroke="#D8B247" stroke-linecap="round" stroke-width="5">
+      <path d="M77 12v10M108 44H98M99 21l-7 7M54 21l7 7" />
+    </g>
+    <circle cx="77" cy="44" r="25" fill="#F2CF68" />
+    <path d="M31 105h65a21 21 0 0 0 0-42 31 31 0 0 0-60-8 25 25 0 0 0-5 50Z" fill="#A3BEC7" />
+  </symbol>
+
+  <symbol id="partly-cloudy-night" viewBox="0 0 128 128">
+    <path d="M89 17a28 28 0 0 0 26 42A38 38 0 1 1 89 17Z" fill="#E7C96F" />
+    <path d="M31 105h65a21 21 0 0 0 0-42 31 31 0 0 0-60-8 25 25 0 0 0-5 50Z" fill="#A3BEC7" />
+  </symbol>
+
+  <symbol id="cloud" viewBox="0 0 128 128">
+    <path d="M29 101h68a22 22 0 0 0 0-44 32 32 0 0 0-61-8 26 26 0 0 0-7 52Z" fill="#A3BEC7" />
+  </symbol>
+
+  <symbol id="rain" viewBox="0 0 128 128">
+    <path d="M29 84h68a22 22 0 0 0 0-44 32 32 0 0 0-61-8 26 26 0 0 0-7 52Z" fill="#A3BEC7" />
+    <g fill="#6D9FB2">
+      <path d="M42 92c0 8-10 8-10 0 0-5 5-11 5-11s5 6 5 11ZM70 102c0 8-10 8-10 0 0-5 5-11 5-11s5 6 5 11ZM98 92c0 8-10 8-10 0 0-5 5-11 5-11s5 6 5 11Z" />
+    </g>
+  </symbol>
+
+  <symbol id="storm" viewBox="0 0 128 128">
+    <path d="M29 80h68a22 22 0 0 0 0-44 32 32 0 0 0-61-8 26 26 0 0 0-7 52Z" fill="#A3BEC7" />
+    <path d="m66 70-18 28h16l-5 22 25-34H67l9-16Z" fill="#E7C96F" />
+  </symbol>
+
+  <symbol id="snow" viewBox="0 0 128 128">
+    <path d="M29 80h68a22 22 0 0 0 0-44 32 32 0 0 0-61-8 26 26 0 0 0-7 52Z" fill="#A3BEC7" />
+    <g fill="#6D9FB2">
+      <circle cx="39" cy="98" r="5" />
+      <circle cx="65" cy="108" r="5" />
+      <circle cx="91" cy="98" r="5" />
+    </g>
+  </symbol>
+
+  <symbol id="mist" viewBox="0 0 128 128">
+    <path d="M29 77h68a22 22 0 0 0 0-44 32 32 0 0 0-61-8 26 26 0 0 0-7 52Z" fill="#A3BEC7" />
+    <g fill="none" stroke="#6D9FB2" stroke-linecap="round" stroke-width="6">
+      <path d="M25 94h78M38 109h52" />
+    </g>
+  </symbol>
+</svg>

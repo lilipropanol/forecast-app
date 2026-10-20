@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#e8f5fb" />
+    <meta
+      name="description"
+      content="A simple three-day weather forecast, packing advice and current air-quality information."
+    />
+    <title>Weather forecast</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div id="app">
+      <div class="weather-shell">
+        <aside class="side-panel">
+          <form class="search-form" @submit.prevent="searchWeather" :aria-busy="loading">
+            <label for="city">Search for a city</label>
+            <input
+              id="city"
+              v-model.trim="city"
+              type="search"
+              name="city"
+              maxlength="100"
+              autocomplete="off"
+              placeholder="Dublin, IE"
+              aria-describedby="city-hint"
+              required
+            />
+            <button type="submit" :disabled="loading || !city.trim()">Search</button>
+            <p id="city-hint" class="search-hint">
+              Add a country code if the city name is shared.
+            </p>
+          </form>
+
+          <section v-if="result" class="today-summary" aria-labelledby="city-name">
+            <h2 id="city-name" class="city-name">{{ cityLabel }}</h2>
+            <p class="day-label">{{ formatDate(result.days[0].date) }}</p>
+            <div class="current-condition">
+              <svg class="weather-icon" viewBox="0 0 128 128" width="144" height="144" aria-hidden="true">
+                <use :href="'/weather-icons.svg#' + weatherIcon(result.days[0].icon)"></use>
+              </svg>
+              <p>{{ result.days[0].conditionDescription }}</p>
+            </div>
+            <p class="average-temperature">
+              {{ formatTemperature(result.days[0].averageTemperature) }}
+            </p>
+            <p class="average-label">Average temperature</p>
+            <p
+              class="temperature-category"
+              :class="'category-' + result.days[0].temperatureCategory.toLowerCase()"
+            >
+              {{ result.days[0].temperatureCategory }}
+            </p>
+            <div class="high-low">
+              <span>Low <strong>{{ formatTemperature(result.days[0].minTemperature) }}</strong></span>
+              <span>High <strong>{{ formatTemperature(result.days[0].maxTemperature) }}</strong></span>
+            </div>
+          </section>
+          <p v-else class="side-empty">
+            Search a city to see its forecast and packing advice.
+          </p>
+        </aside>
+
+        <main class="main-panel">
+          <section v-if="loading" class="message-panel" aria-live="polite">
+            <p>Looking up the forecast...</p>
+          </section>
+
+          <section v-if="error" class="message-panel error-panel" role="alert">
+            <div>
+              <h1>Couldn't load this forecast</h1>
+              <p>{{ error }}</p>
+            </div>
+            <button class="retry-button" type="button" @click="searchWeather" :disabled="loading">
+              Try again
+            </button>
+          </section>
+
+          <section v-if="!loading && !error && !result" class="message-panel empty-panel">
+            <svg class="weather-icon empty-icon" viewBox="0 0 128 128" width="144" height="144" aria-hidden="true">
+              <use href="/weather-icons.svg#partly-cloudy-day"></use>
+            </svg>
+            <h1>Three-day forecast</h1>
+            <p>Your temperature, wind, rainfall and air-quality details will appear here.</p>
+          </section>
+
+          <div v-if="result && !loading" class="weather-results">
+            <section class="forecast-section" aria-labelledby="forecast-title">
+              <div class="section-heading">
+                <h1 id="forecast-title">Three-day forecast</h1>
+                <p>Local forecast</p>
+              </div>
+              <p v-if="!result.hasThreeDays" class="notice">
+                OpenWeather returned fewer than three forecast days. The available days are shown below.
+              </p>
+              <div class="table-scroll" tabindex="0" aria-label="Scrollable forecast table">
+                <table class="forecast-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Day</th>
+                      <th scope="col">Conditions</th>
+                      <th scope="col">Temperature</th>
+                      <th scope="col">Wind speed</th>
+                      <th scope="col">Rainfall</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="day in result.days" :key="day.date">
+                      <th scope="row">{{ formatDate(day.date) }}</th>
+                      <td class="weather-condition" data-label="Conditions">
+                        <div class="condition-content">
+                          <svg class="weather-icon" viewBox="0 0 128 128" width="52" height="52" aria-hidden="true">
+                            <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
+                          </svg>
+                          <span>{{ day.conditionDescription }}</span>
+                        </div>
+                      </td>
+                      <td data-label="Temperature">
+                        <span class="temperature-range">
+                          {{ formatTemperature(day.minTemperature) }} – {{ formatTemperature(day.maxTemperature) }}
+                        </span>
+                        <span
+                          class="table-category"
+                          :class="'category-' + day.temperatureCategory.toLowerCase()"
+                        >
+                          {{ day.temperatureCategory }}
+                        </span>
+                      </td>
+                      <td data-label="Wind speed">{{ formatNumber(day.averageWindSpeed) }} m/s</td>
+                      <td data-label="Rainfall">{{ formatRainfall(day.rainfall) }} mm</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <div class="details-grid">
+              <section class="packing-section" aria-labelledby="packing-title">
+                <h2 id="packing-title">What to pack</h2>
+                <p
+                  class="packing-advice"
+                  :class="result.packing.umbrellaNeeded ? 'needs-umbrella' : 'no-umbrella'"
+                >
+                  {{ result.packing.umbrellaNeeded ? "Bring an umbrella" : "No umbrella needed" }}
+                </p>
+                <p class="temperature-advice">{{ result.packing.temperatureAdvice }}</p>
+              </section>
+
+              <section class="air-section" aria-labelledby="air-title">
+                <div class="air-heading">
+                  <h2 id="air-title">Air quality</h2>
+                  <p
+                    v-if="result.airQuality.available"
+                    class="air-status"
+                    :class="'aqi-level-' + result.airQuality.aqi"
+                  >
+                    <span class="status-dot" aria-hidden="true"></span>
+                    {{ result.airQuality.aqiLabel }} · AQI {{ result.airQuality.aqi }}/5
+                  </p>
+                </div>
+
+                <p v-if="!result.airQuality.available" class="air-message">
+                  {{ result.airQuality.message }}
+                </p>
+                <p v-else-if="result.airQuality.warnings.length === 0" class="air-message">
+                  All measured pollutants are within OpenWeather's Good range.
+                </p>
+                <ul v-else class="warning-list">
+                  <li v-for="warning in result.airQuality.warnings" :key="warning.name">
+                    <div class="warning-line">
+                      <strong>{{ warning.name }}</strong>
+                      <span>{{ formatNumber(warning.value) }} µg/m³ · {{ warning.category }}</span>
+                    </div>
+                    <p>{{ warning.healthRisk }}</p>
+                  </li>
+                </ul>
+              </section>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
