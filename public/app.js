@@ -13,13 +13,7 @@ const app = Vue.createApp({
   },
   computed: {
     cityLabel() {
-      if (!this.result) {
-        return "";
-      }
-
-      return [this.result.city.name, this.result.city.state, this.result.city.country]
-        .filter(Boolean)
-        .join(", ");
+      return this.result ? this.formatCityName(this.result.city) : "";
     }
   },
   methods: {
@@ -37,15 +31,9 @@ const app = Vue.createApp({
 
       try {
         const response = await fetch("/api/weather?city=" + encodeURIComponent(searchCity));
-        const data = await this.readJsonResponse(response);
-        if (!response.ok) {
-          throw new Error(data.error || "The weather request failed. Please try again.");
-        }
-        this.result = data;
+        this.result = await this.readJsonResponse(response);
       } catch (requestError) {
-        this.error =
-          requestError.message ||
-          "I couldn't reach the weather server. Check your connection and try again.";
+        this.error = requestError.message;
       } finally {
         this.loading = false;
       }
@@ -60,7 +48,11 @@ const app = Vue.createApp({
           "The server returned a web page instead of JSON. Start or restart the app with `npm start` from the project folder, then reload this page."
         );
       }
-      return response.json();
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "The weather request failed. Please try again.");
+      }
+      return data;
     },
     async compareCities() {
       const secondCity = this.comparisonCity.trim();
@@ -78,32 +70,17 @@ const app = Vue.createApp({
 
       try {
         const response = await fetch("/api/compare?" + params.toString());
-        const data = await this.readJsonResponse(response);
-        if (!response.ok) {
-          throw new Error(data.error || "The city comparison failed. Please try again.");
-        }
-        this.comparisonResult = data;
+        this.comparisonResult = await this.readJsonResponse(response);
       } catch (requestError) {
-        this.comparisonError =
-          requestError.message ||
-          "I couldn't reach the weather server. Check your connection and try again.";
+        this.comparisonError = requestError.message;
       } finally {
         this.comparing = false;
       }
     },
-    formatDate(dateString) {
+    formatDate(dateString, short = false) {
       const date = new Date(dateString + "T12:00:00Z");
       return new Intl.DateTimeFormat("en-IE", {
-        weekday: "long",
-        day: "numeric",
-        month: "short",
-        timeZone: "UTC"
-      }).format(date);
-    },
-    formatShortDate(dateString) {
-      const date = new Date(dateString + "T12:00:00Z");
-      return new Intl.DateTimeFormat("en-IE", {
-        weekday: "short",
+        weekday: short ? "short" : "long",
         day: "numeric",
         month: "short",
         timeZone: "UTC"
@@ -136,14 +113,7 @@ const app = Vue.createApp({
       }).format(cleanValue);
     },
     formatTemperature(value) {
-      if (!Number.isFinite(value)) {
-        return "—°C";
-      }
-      const cleanValue = Math.abs(value) < 0.05 ? 0 : value;
-      return (
-        new Intl.NumberFormat("en-IE", { maximumFractionDigits: 1 }).format(cleanValue) +
-        "°C"
-      );
+      return this.formatNumber(value) + "°C";
     },
     formatRainfall(value) {
       if (!Number.isFinite(value)) {

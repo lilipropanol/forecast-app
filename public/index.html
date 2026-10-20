@@ -283,7 +283,7 @@
 
                     <ul class="comparison-days" :aria-label="formatCityName(destination.city) + ' forecast'">
                       <li v-for="day in destination.days" :key="day.date">
-                        <span class="comparison-day-date">{{ formatShortDate(day.date) }}</span>
+                        <span class="comparison-day-date">{{ formatDate(day.date, true) }}</span>
                         <svg class="weather-icon" viewBox="0 0 128 128" width="40" height="40" aria-hidden="true">
                           <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
                         </svg>

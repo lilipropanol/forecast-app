@@ -1,4 +1,4 @@
-# Daymark Weather Planner
+# Weather Planner
 
 A small Vue and Express app for Internet Applications Assignment 1. It looks up a city, summarizes the next three local forecast days, gives simple packing advice and checks current air pollution.
 

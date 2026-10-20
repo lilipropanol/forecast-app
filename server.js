@@ -1,18 +1,15 @@
 const express = require("express");
 const path = require("node:path");
 
-// Create the Express app and choose where it listens for browser requests.
 const app = express();
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || "127.0.0.1";
+const apiKey = process.env.OPENWEATHER_API_KEY;
 
-// Main route: receive a city, get its weather, and return one JSON response.
+// Search one city and send its weather data back as JSON.
 app.get("/api/weather", async (req, res) => {
-  // Read the city from a URL like /api/weather?city=Dublin.
   const city = typeof req.query.city === "string" ? req.query.city.trim() : "";
-  const apiKey = process.env.OPENWEATHER_API_KEY;
 
-  // Stop early if the browser did not send a usable city name.
   if (!city || city.length > 100) {
     return res.status(400).json({
       error: "Enter a city name, optionally followed by a country code."
@@ -26,18 +23,15 @@ app.get("/api/weather", async (req, res) => {
   }
 
   try {
-    return res.json(await getWeatherForCity(city, apiKey));
+    return res.json(await getWeatherForCity(city));
   } catch (error) {
-    return sendApiError(res, error, "the forecast");
+    return res.status(error.status || 502).json({ error: error.message });
   }
 });
 
-// Compare two cities. Repeated cities parameters allow country codes with commas:
-// /api/compare?cities=Dublin%2C%20IE&cities=Lisbon%2C%20PT
-// A simple comma-separated request such as ?cities=Dublin,Lisbon also works.
+// The browser sends two "cities" values, one for each place.
 app.get("/api/compare", async (req, res) => {
   const cities = getRequestedCities(req.query.cities);
-  const apiKey = process.env.OPENWEATHER_API_KEY;
 
   if (cities.length !== 2 || cities.some((city) => !city || city.length > 100)) {
     return res.status(400).json({
@@ -52,9 +46,9 @@ app.get("/api/compare", async (req, res) => {
   }
 
   try {
-    // Promise.all starts both city lookups together and waits for both results.
+    // Start both lookups together and wait for both results.
     const destinations = await Promise.all(
-      cities.map((city) => getWeatherForCity(city, apiKey))
+      cities.map((city) => getWeatherForCity(city))
     );
 
     return res.json({
@@ -62,17 +56,13 @@ app.get("/api/compare", async (req, res) => {
       comparison: makeCityComparison(destinations)
     });
   } catch (error) {
-    return sendApiError(res, error, "the comparison");
+    return res.status(error.status || 502).json({ error: error.message });
   }
 });
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.listen(port, host, () => {
-  console.log("Weather planner running at http://localhost:" + port);
-});
-
-// The compare route accepts either two repeated values or two comma-separated names.
+// Repeated values keep commas in names like "Dublin, IE" together.
 function getRequestedCities(value) {
   if (Array.isArray(value)) {
     return value.map((city) => String(city).trim());
@@ -83,20 +73,19 @@ function getRequestedCities(value) {
   return [];
 }
 
-// Load the forecast and air quality for one city. Both routes reuse this function.
-async function getWeatherForCity(city, apiKey) {
+// Both routes use the same function to get a city's forecast.
+async function getWeatherForCity(city) {
   const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
   locationUrl.search = new URLSearchParams({ q: city, limit: "1", appid: apiKey });
-  const matches = await getOpenWeatherJson(locationUrl);
+  const places = await getOpenWeatherJson(locationUrl);
 
-  if (!Array.isArray(matches) || matches.length === 0) {
-    throw createRequestError(
-      404,
-      "I couldn't find that city. Try adding its country code, for example Dublin, IE."
-    );
+  if (!places.length) {
+    const error = new Error("City not found. Try adding its country code.");
+    error.status = 404;
+    throw error;
   }
 
-  const place = matches[0];
+  const place = places[0];
   const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
   forecastUrl.search = new URLSearchParams({
     lat: String(place.lat),
@@ -105,21 +94,20 @@ async function getWeatherForCity(city, apiKey) {
     appid: apiKey
   });
   const forecast = await getOpenWeatherJson(forecastUrl);
-  const dailySummaries = makeDailySummaries(
-    forecast.list || [],
+  const summaries = makeDailySummaries(
+    forecast.list,
     forecast.city.timezone || 0
   );
-  const today = dailySummaries[0];
-  const days = dailySummaries.slice(1, 4);
+  const today = summaries[0];
+  const days = summaries.slice(1, 4);
 
-  if (!today || days.length === 0) {
-    throw createRequestError(
-      502,
-      "OpenWeather returned no forecast readings for this city. Please try again."
-    );
+  if (!today || !days.length) {
+    const error = new Error("OpenWeather did not return enough forecast data.");
+    error.status = 502;
+    throw error;
   }
 
-  // Air quality is optional: if it fails, return the forecast with an unavailable message.
+  // The forecast is still useful if the separate air-quality request fails.
   let airQuality;
   try {
     const airUrl = new URL("https://api.openweathermap.org/data/2.5/air_pollution");
@@ -128,19 +116,12 @@ async function getWeatherForCity(city, apiKey) {
       lon: String(place.lon),
       appid: apiKey
     });
-    const airResponse = await getOpenWeatherJson(airUrl);
-    const currentReading = Array.isArray(airResponse.list) ? airResponse.list[0] : null;
-
-    airQuality = currentReading
-      ? makeAirQualitySummary(currentReading)
-      : {
-          available: false,
-          message: "OpenWeather did not return a current air-quality reading for this city."
-        };
-  } catch (error) {
+    const airData = await getOpenWeatherJson(airUrl);
+    airQuality = makeAirQualitySummary(airData.list[0]);
+  } catch {
     airQuality = {
       available: false,
-      message: messageForApiError(error, "air-quality data")
+      message: "Air-quality data is unavailable."
     };
   }
 
@@ -158,32 +139,17 @@ async function getWeatherForCity(city, apiKey) {
   };
 }
 
-function createRequestError(status, clientMessage) {
-  const error = new Error(clientMessage);
-  error.status = status;
-  error.clientMessage = clientMessage;
-  return error;
-}
-
-function sendApiError(res, error, dataName) {
-  const status = Number.isInteger(error.status) ? error.status : 502;
-  const message = error.clientMessage || messageForApiError(error, dataName);
-  return res.status(status).json({ error: message });
-}
-
 function formatCityName(city) {
   return [city.name, city.state, city.country].filter(Boolean).join(", ");
 }
 
-// Compare rain days first, then use the assignment's Mild category to break a tie.
+// Fewer rainy days wins; if tied, more Mild days wins.
 function makeCityComparison(destinations) {
   const metrics = destinations.map((destination) => {
     const days = destination.days;
-    const averageTemperature =
-      days.reduce((total, day) => total + day.averageTemperature, 0) / days.length;
-
     return {
-      averageTemperature,
+      averageTemperature:
+        days.reduce((total, day) => total + day.averageTemperature, 0) / days.length,
       rainDays: days.filter((day) => day.rainExpected).length,
       mildDays: days.filter((day) => day.temperatureCategory === "Mild").length,
       aqi: destination.airQuality.available ? destination.airQuality.aqi : null
@@ -197,27 +163,29 @@ function makeCityComparison(destinations) {
     betterWeatherIndex = metrics[0].mildDays > metrics[1].mildDays ? 0 : 1;
   }
 
-  const umbrellaCityIndexes = metrics
-    .map((city, index) => (city.rainDays > 0 ? index : -1))
-    .filter((index) => index !== -1);
-
   let worseAirIndex = null;
-  if (metrics[0].aqi !== null && metrics[1].aqi !== null && metrics[0].aqi !== metrics[1].aqi) {
+  if (
+    metrics[0].aqi !== null &&
+    metrics[1].aqi !== null &&
+    metrics[0].aqi !== metrics[1].aqi
+  ) {
     worseAirIndex = metrics[0].aqi > metrics[1].aqi ? 0 : 1;
   }
 
-  const cityNames = destinations.map((destination) => formatCityName(destination.city));
-  const weatherVerdict =
-    betterWeatherIndex === null
-      ? "Neither forecast has a clear weather advantage"
-      : cityNames[betterWeatherIndex] + " has the better forecast";
+  const names = destinations.map((destination) => formatCityName(destination.city));
+  const weatherVerdict = betterWeatherIndex === null
+    ? "Neither forecast has a clear weather advantage"
+    : names[betterWeatherIndex] + " has the better forecast";
+
   let umbrellaVerdict;
-  if (umbrellaCityIndexes.length === 0) {
-    umbrellaVerdict = "Neither city is forecast to have rain";
-  } else if (umbrellaCityIndexes.length === 2) {
+  if (metrics[0].rainDays && metrics[1].rainDays) {
     umbrellaVerdict = "Both cities may need an umbrella";
+  } else if (metrics[0].rainDays) {
+    umbrellaVerdict = names[0] + " may need an umbrella";
+  } else if (metrics[1].rainDays) {
+    umbrellaVerdict = names[1] + " may need an umbrella";
   } else {
-    umbrellaVerdict = cityNames[umbrellaCityIndexes[0]] + " may need an umbrella";
+    umbrellaVerdict = "Neither city is forecast to have rain";
   }
 
   let airVerdict;
@@ -226,16 +194,14 @@ function makeCityComparison(destinations) {
   } else if (worseAirIndex === null) {
     airVerdict = "Both cities have the same AQI";
   } else {
-    airVerdict = cityNames[worseAirIndex] + " has worse air quality";
+    airVerdict = names[worseAirIndex] + " has worse air quality";
   }
-
-  const temperatureDifference = Math.abs(
-    metrics[0].averageTemperature - metrics[1].averageTemperature
-  );
 
   return {
     metrics,
-    temperatureDifference,
+    temperatureDifference: Math.abs(
+      metrics[0].averageTemperature - metrics[1].averageTemperature
+    ),
     betterWeatherIndex,
     worseAirIndex,
     verdict: [weatherVerdict, umbrellaVerdict, airVerdict].join(". ") + "."
@@ -244,96 +210,67 @@ function makeCityComparison(destinations) {
 
 async function getOpenWeatherJson(url) {
   let response;
-
   try {
     response = await fetch(url);
-  } catch (error) {
+  } catch {
     const networkError = new Error("Could not connect to OpenWeather.");
-    networkError.isNetworkError = true;
+    networkError.status = 502;
     throw networkError;
   }
 
-  let data;
-  try {
-    data = await response.json();
-  } catch (error) {
-    data = {};
-  }
-
+  const data = await response.json();
   if (!response.ok) {
-    const apiError = new Error("OpenWeather returned an error.");
-    apiError.status = response.status;
-    throw apiError;
+    const error = new Error(
+      "OpenWeather request failed with status " + response.status + "."
+    );
+    error.status = response.status;
+    throw error;
   }
-
   return data;
 }
 
-// Turn technical API failures into short messages the page can display.
-function messageForApiError(error, dataName) {
-  if (error.isNetworkError) {
-    return "I couldn't reach OpenWeather. Check your connection and try again.";
-  }
-  if (error.status === 401) {
-    return "OpenWeather rejected the API key. Check that the key in .env is correct and active.";
-  }
-  if (error.status === 429) {
-    return "OpenWeather has received too many requests. Please wait a little and try again.";
-  }
-  if (error.status >= 500) {
-    return "OpenWeather is temporarily unavailable. Please try again shortly.";
-  }
-  return "I couldn't load " + dataName + " from OpenWeather. Please try again.";
-}
-
-// Combine all three-hour readings for each local calendar date into one daily summary.
+// OpenWeather sends readings every three hours, so combine them by local date.
 function makeDailySummaries(readings, timezoneOffset) {
   const daysByDate = new Map();
 
-  for (const reading of readings) {
+  for (const reading of readings || []) {
     const date = new Date((reading.dt + timezoneOffset) * 1000)
       .toISOString()
       .slice(0, 10);
-    if (!daysByDate.has(date)) {
-      daysByDate.set(date, []);
-    }
+    if (!daysByDate.has(date)) daysByDate.set(date, []);
     daysByDate.get(date).push(reading);
   }
 
-  return Array.from(daysByDate.entries()).map(([date, points]) => {
-    const representativePoint = points[Math.floor(points.length / 2)];
-    const condition = representativePoint.weather?.[0] || {};
+  return Array.from(daysByDate, ([date, points]) => {
+    const middle = points[Math.floor(points.length / 2)];
+    const condition = middle.weather[0];
     const temperatures = points.map((point) => point.main.temp);
     const lows = points.map((point) => point.main.temp_min ?? point.main.temp);
     const highs = points.map((point) => point.main.temp_max ?? point.main.temp);
-    const windSpeeds = points.map((point) => point.wind.speed);
-    const rainfall = points.reduce((total, point) => {
-      return total + (point.rain && point.rain["3h"] ? point.rain["3h"] : 0);
-    }, 0);
-    const averageTemperature =
-      temperatures.reduce((total, temperature) => total + temperature, 0) /
-      temperatures.length;
-    const averageWindSpeed =
-      windSpeeds.reduce((total, speed) => total + speed, 0) / windSpeeds.length;
+    const average = (values) =>
+      values.reduce((sum, value) => sum + value, 0) / values.length;
+    const rainfall = points.reduce(
+      (total, point) => total + (point.rain?.["3h"] || 0),
+      0
+    );
     const rainExpected = points.some((point) => {
-      const mainWeather = point.weather?.[0]?.main;
+      const weather = point.weather[0].main;
       return (
-        (point.rain && point.rain["3h"] > 0) ||
-        mainWeather === "Rain" ||
-        mainWeather === "Drizzle" ||
-        mainWeather === "Thunderstorm"
+        (point.rain?.["3h"] || 0) > 0 ||
+        ["Rain", "Drizzle", "Thunderstorm"].includes(weather)
       );
     });
+    const averageTemperature = average(temperatures);
 
     return {
       date,
-      icon: condition.icon || "03d",
-      conditionDescription: condition.description || "Cloudy",
+      icon: condition.icon,
+      conditionDescription: condition.description,
       minTemperature: Math.min(...lows),
       maxTemperature: Math.max(...highs),
       averageTemperature,
       temperatureCategory: getTemperatureCategory(averageTemperature),
-      averageWindSpeed,
+      averageWindSpeed: average(points.map((point) => point.wind.speed)),
       rainfall,
       rainExpected
     };
@@ -346,7 +283,6 @@ function getTemperatureCategory(temperature) {
   return "Hot";
 }
 
-// Choose clothing advice from the temperatures and rain in the next three days.
 function makePackingAdvice(days) {
   const categories = [...new Set(days.map((day) => day.temperatureCategory))];
   let temperatureAdvice;
@@ -368,12 +304,10 @@ function makePackingAdvice(days) {
     umbrellaAdvice: umbrellaNeeded
       ? "Rain is forecast. Bring an umbrella."
       : "No rain is forecast in these three days.",
-    temperatureAdvice,
-    temperatureCategories: categories
+    temperatureAdvice
   };
 }
 
-// Convert OpenWeather's air-quality data into a label and any pollutant warnings.
 function makeAirQualitySummary(reading) {
   const aqiLabels = ["", "Good", "Fair", "Moderate", "Poor", "Very poor"];
   const pollutants = [
@@ -415,23 +349,22 @@ function makeAirQualitySummary(reading) {
     }
   ];
 
-  const components = reading.components || {};
-  const warnings = pollutants
-    .filter((pollutant) => Number.isFinite(components[pollutant.key]))
-    .filter((pollutant) => components[pollutant.key] >= pollutant.limits[0])
-    .map((pollutant) => {
-      const value = components[pollutant.key];
-      const level = pollutant.limits.findIndex((limit) => value < limit);
-      const categories = ["Fair", "Moderate", "Poor", "Very poor"];
-      return {
-        name: pollutant.name,
-        value,
-        category: level === -1 ? "Very poor" : categories[Math.max(0, level - 1)],
-        healthRisk: pollutant.healthRisk
-      };
-    });
-  const aqi = Math.round(reading.main?.aqi || 0);
+  const warnings = [];
+  for (const pollutant of pollutants) {
+    const value = reading.components[pollutant.key];
+    if (!Number.isFinite(value) || value < pollutant.limits[0]) continue;
 
+    const level = pollutant.limits.findIndex((limit) => value < limit);
+    const categories = ["Fair", "Moderate", "Poor", "Very poor"];
+    warnings.push({
+      name: pollutant.name,
+      value,
+      category: level === -1 ? "Very poor" : categories[Math.max(0, level - 1)],
+      healthRisk: pollutant.healthRisk
+    });
+  }
+
+  const aqi = reading.main.aqi;
   return {
     available: true,
     aqi,
@@ -439,3 +372,7 @@ function makeAirQualitySummary(reading) {
     warnings
   };
 }
+
+app.listen(port, host, () => {
+  console.log("Weather planner running at http://localhost:" + port);
+});
