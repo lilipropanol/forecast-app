@@ -1,0 +1,24 @@
+sequenceDiagram
+    actor U as User
+    participant C as Vue client
+    participant S as Express
+    participant O as OpenWeather
+    U->>C: submit city
+    C->>C: loading = true
+    C->>S: GET /api/weather?city=Dublin
+    S->>S: validate query
+    S->>O: GET /geo/1.0/direct
+    O-->>S: [{ lat, lon, name, country }]
+    S->>O: GET /data/2.5/forecast
+    O-->>S: { list[40], city.timezone }
+    S->>S: makeDailySummaries, makePackingAdvice
+    S->>O: GET /data/2.5/air_pollution
+    alt success
+        O-->>S: { list[0].components }
+        S->>S: makeAirQualitySummary
+    else failure
+        S->>S: airQuality = { available: false }
+    end
+    S-->>C: 200 { city, today, days, packing, airQuality }
+    C->>C: result = data, loading = false
+    C-->>U: template re-renders
