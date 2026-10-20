@@ -1,0 +1,167 @@
+<html><head><meta charset='utf-8'><style>
+@page{size:A4;margin:20mm 18mm}
+body{font-family:Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.4;color:#111}
+h1{font-size:18pt;margin:0 0 4pt}h2{font-size:13pt;margin:16pt 0 6pt;border-bottom:1px solid #999;padding-bottom:2pt}
+p{margin:0 0 7pt;text-align:justify}ul{margin:0 0 7pt 18pt;padding:0}li{margin-bottom:4pt}
+table{border-collapse:collapse;width:100%;margin:6pt 0 10pt;font-size:9.5pt}
+th,td{border:1px solid #888;padding:3pt 5pt;vertical-align:top;text-align:left}th{background:#eee}
+code{font-family:Consolas,Menlo,monospace;font-size:9pt;background:#f3f3f3;padding:0 2px}
+hr{border:0;margin:6pt 0}
+</style></head><body><h1>Daymark: a reactive weather and packing planner</h1>
+<p>CSU44000 Internet Applications – Assignment 1
+Liliana Berenguer Jin</p>
+<hr />
+<h2>1. Requirements</h2>
+<p>The application takes a destination city and returns a three-day forecast, packing advice (umbrella, and whether to dress for cold, mild or hot weather) and an air-quality warning if any pollutant is above OpenWeather's "Good" band.</p>
+<p>Before writing code I mapped each requirement to the OpenWeather endpoint that could satisfy it (Table 1). This settled two things early. Geocoding has to run first, because the forecast and air-pollution endpoints take coordinates rather than a city name. And three of the four requirements come out of the same forecast response, so one request can feed most of the page.</p>
+<p><strong>Table 1 – Requirements mapped to OpenWeather APIs</strong></p>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>OpenWeather API</th>
+<th>What it returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>City name → location</td>
+<td>Geocoding (<code>/geo/1.0/direct</code>)</td>
+<td>Latitude and longitude</td>
+</tr>
+<tr>
+<td>Three-day forecast (temperature, wind, rain)</td>
+<td>5-day / 3-hour Forecast (<code>/data/2.5/forecast</code>)</td>
+<td>~40 readings at 3-hour intervals</td>
+</tr>
+<tr>
+<td>Umbrella and Cold / Mild / Hot advice</td>
+<td>Forecast (same response)</td>
+<td>Rain and temperature per reading</td>
+</tr>
+<tr>
+<td>Pollutant warnings with health risk</td>
+<td>Air Pollution (<code>/data/2.5/air_pollution</code>)</td>
+<td>AQI (1–5) and concentrations of SO₂, NO₂, PM₁₀, PM₂.₅, O₃, CO</td>
+</tr>
+</tbody>
+</table>
+<p>The brief also fixes the shape of the system: a Vue client in the browser, a Node server exposing at least one API primitive, and the third-party calls made from the server. That last point is not optional. <code>fetch</code> in the browser is subject to the same-origin policy, so a page served from <code>localhost:3000</code> cannot call <code>api.openweathermap.org</code> directly, and the API key would be visible in the developer tools anyway.</p>
+<hr />
+<h2>2. System architecture</h2>
+<p><strong>Figure 1 – System architecture.</strong> <em>Three boxes. Browser (Vue app: reactive state → template). Express server, split into static files from <code>/public</code> and the route <code>GET /api/weather</code>. OpenWeather with its three endpoints. Double arrow browser ⇄ server labelled "same origin, JSON"; numbered arrows server → OpenWeather for Geocoding, Forecast, Air Pollution; the <code>.env</code> API key drawn inside the server box.</em></p>
+<p>The server does two jobs. <code>express.static</code> serves <code>index.html</code>, <code>app.js</code> and the stylesheet from <code>/public</code>, and a single <code>app.get("/api/weather")</code> route reads <code>req.query.city</code>, calls OpenWeather, and replies with <code>res.json</code>. Because the page and the API share an origin there is no CORS configuration at all.</p>
+<p>The endpoint is RESTful in the sense that matters: the URI identifies a resource (the packing summary for a city), it is read with <code>GET</code>, so repeating the request is safe and idempotent, and the server is stateless. There are no sessions and no database; every request carries the city it needs and nothing else. I chose that for simplicity, but it is also what makes the API trivial to test with a URL in the browser and what would let it scale behind a load balancer without any sticky-session problems.</p>
+<p>The client is thin on purpose. The server returns an already-digested object (<code>today</code>, <code>days</code>, <code>packing</code>, <code>airQuality</code>) and the browser only renders it. Putting the rules on the server means they are in one place, can be changed without touching the UI, and are not exposed to the client.</p>
+<p>The stack is Node 22, Express 4 and Vue 3 from a CDN with no build step. Node 22 has <code>fetch</code> built in and reads <code>.env</code> with <code>--env-file</code>, so Express is the only dependency.</p>
+<hr />
+<h2>3. Server design</h2>
+<p>I built the server in two iterations, which I thought would be useful for separating the question of how to talk to OpenWeather from the question of what to do with its data. Some relevant points from the first iteration:</p>
+<ul>
+<li>It does the minimum: read the city from the query string, build the Geocoding URL with <code>URLSearchParams</code>, <code>await</code> the reply, take the first match, build the Forecast URL from its <code>lat</code> and <code>lon</code>, <code>await</code> again, and return the readings as <code>{ time, temperature, description }</code>. About eighty lines, no validation, no error handling.</li>
+<li>The goal was to get the asynchronous flow right before adding logic. <code>fetch</code> runs outside the JavaScript engine as a Web API; <code>await</code> suspends the handler and hands control back to the event loop, and the handler resumes from the queue when the response arrives. Node is single-threaded, but the server is never blocked waiting for OpenWeather and can keep serving other requests.</li>
+<li>Writing the two dependent calls with <code>async/await</code> rather than <code>.then()</code> chains keeps them readable top to bottom, which mattered once a third call was added.</li>
+<li>Returning the raw readings exposed a problem with the phrase "next three days". OpenWeather's timestamps are UTC and the first day is almost always partial, so grouping by UTC date gives the wrong first day for a city like Tokyo. I decided to shift each reading by the <code>city.timezone</code> offset before taking its date, show the current partial day separately as "today", and fill the table with the next three full local days.</li>
+</ul>
+<p><strong>Figure 2 – Sequence diagram for one search.</strong> <em>Lifelines: User, Vue client, Express, OpenWeather. Submit → client sets <code>loading</code>, calls <code>fetch('/api/weather?city=…')</code> → server validates → Geocoding request/response → Forecast request/response → Air Pollution request/response inside an <code>alt</code> frame (success / fallback) → <code>res.json</code> → client sets <code>result</code>, template re-renders.</em></p>
+<p>The second iteration keeps the same chain and adds:</p>
+<ul>
+<li><strong>Daily summaries.</strong> <code>makeDailySummaries</code> groups readings by local date and computes min, max and average temperature, average wind, total rainfall from <code>rain.3h</code>, and a <code>rainExpected</code> flag set if any reading reports rain or a Rain / Drizzle / Thunderstorm condition.</li>
+<li><strong>Packing rules.</strong> The Cold / Mild / Hot thresholds from the brief are applied to each day's average. If the days fall into different categories the advice is "pack layers". Umbrella is set if any day expects rain.</li>
+<li><strong>Air quality.</strong> Each pollutant is compared with the top of OpenWeather's "Good" band and anything above is reported with its band and a short health risk.</li>
+<li><strong>Error handling.</strong> A <code>getOpenWeatherJson</code> wrapper turns network failures and non-2xx replies into errors carrying a status, and the route maps them to the right class of HTTP code (Table 2). The air-pollution call sits in its own <code>try/catch</code> so that if that API fails, the forecast is still returned with a note.</li>
+</ul>
+<p><strong>Table 2 – Responses from <code>GET /api/weather</code></strong></p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>200</td>
+<td>Success: <code>city</code>, <code>today</code>, <code>days[3]</code>, <code>packing</code>, <code>airQuality</code></td>
+</tr>
+<tr>
+<td>400</td>
+<td>City missing or over 100 characters</td>
+</tr>
+<tr>
+<td>404</td>
+<td>Geocoding finds no match</td>
+</tr>
+<tr>
+<td>401 / 429</td>
+<td>Passed through from OpenWeather (bad key / rate limit)</td>
+</tr>
+<tr>
+<td>502</td>
+<td>OpenWeather unreachable or returned no readings</td>
+</tr>
+</tbody>
+</table>
+<p>Using distinct status codes meant the client needs one <code>if (!response.ok)</code> check to handle every failure.</p>
+<hr />
+<h2>4. Client design</h2>
+<p>The client is a single Vue instance created with <code>createApp</code> and the Options API. <code>data()</code> holds four reactive variables, <code>city</code>, <code>loading</code>, <code>result</code> and <code>error</code>, and the whole interface is derived from them. I never manipulate the DOM; the template declares what each state looks like and Vue's virtual DOM works out what to re-render when a variable changes. Compared with the <code>XMLHttpRequest</code> style of finding an element and setting its <code>innerHTML</code>, this removed a whole class of bugs where the page and the data disagree.</p>
+<p><strong>Table 3 – Vue features used</strong></p>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>v-model.trim</code></td>
+<td>Two-way binding of the city input</td>
+</tr>
+<tr>
+<td><code>@submit.prevent</code></td>
+<td>Run <code>searchWeather()</code> without a page reload</td>
+</tr>
+<tr>
+<td><code>:disabled</code></td>
+<td>Block the Search button while <code>loading</code></td>
+</tr>
+<tr>
+<td><code>v-if</code> / <code>v-else-if</code> / <code>v-else</code></td>
+<td>Loading, error, empty and result panels; air-quality states</td>
+</tr>
+<tr>
+<td><code>v-for</code> with <code>:key</code></td>
+<td>Forecast rows and pollutant warnings</td>
+</tr>
+<tr>
+<td><code>:class</code></td>
+<td>Colour badges for Cold / Mild / Hot, umbrella advice, AQI dot</td>
+</tr>
+<tr>
+<td><code>{{ }}</code></td>
+<td>All text output</td>
+</tr>
+<tr>
+<td><code>computed</code></td>
+<td><code>cityLabel</code> from city, state and country</td>
+</tr>
+<tr>
+<td><code>methods</code></td>
+<td><code>searchWeather</code> and formatting helpers</td>
+</tr>
+</tbody>
+</table>
+<p><code>searchWeather</code> is an <code>async</code> method using the Fetch API inside <code>try / catch / finally</code>, so <code>loading</code> is always reset. A non-OK response puts the server's error message in a panel with a Retry button.</p>
+<p>Visually it is a two-panel layout: today on the left, the forecast table with packing and air-quality cards on the right, an SVG icon sprite mapped from OpenWeather's icon codes, and colour-coded badges. On narrow screens the table collapses into stacked cards. <strong>Figure 3</strong> <em>(screenshot of the result view)</em>.</p>
+<hr />
+<h2>5. Innovative feature</h2>
+<p><em>To be written once implemented: what it does, why it is useful, what changed on the server, what changed on the client, screenshot.</em></p>
+<hr />
+<h2>6. Testing and reflection</h2>
+<p>I tested manually: a known city (Dublin, IE), an ambiguous one (Paris vs Paris, US), a made-up city, a missing API key, the air-pollution URL broken on purpose, and Tokyo to check the local-date grouping. The stateless API also meant I could test the server on its own by typing URLs into the browser.</p>
+<p>Known limitations: only the first Geocoding match is used, and the air-quality reading is current rather than forecast. The next step would be deploying the server on AWS so it does not have to run locally.</p>
+<p>The main thing I took from this is how much of an Internet application is the server reshaping third-party data into exactly what the client needs, and how much simpler the client becomes once the UI is a function of state rather than a sequence of DOM edits.</p>
+<hr />
+<p><strong>Appendix A – Source code</strong> · <strong>Appendix B – Academic integrity declaration</strong></p></body></html>
