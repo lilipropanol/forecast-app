@@ -1,21 +1,19 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#e8f5fb" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#e8f5fb">
     <meta
       name="description"
-      content="A simple three-day weather forecast, packing advice and current air-quality information."
-    />
+      content="A simple three-day weather forecast, packing advice and current air-quality information.">
     <title>Weather forecast</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
       href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="style.css" />
+      rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js" defer></script>
     <script src="app.js" defer></script>
   </head>
@@ -34,36 +32,35 @@
               autocomplete="off"
               placeholder="Dublin, IE"
               aria-describedby="city-hint"
-              required
-            />
+              required>
             <button type="submit" :disabled="loading || comparing || !city.trim()">Search</button>
             <p id="city-hint" class="search-hint">
               Add a country code if the city name is shared.
             </p>
           </form>
 
-          <section v-if="result" class="today-summary" aria-labelledby="city-name">
+          <section v-if="weatherData" class="today-summary" aria-labelledby="city-name">
             <h2 id="city-name" class="city-name">{{ cityLabel }}</h2>
-            <p class="day-label">{{ formatDate(result.today.date) }}</p>
+            <p class="day-label">{{ formatDate(weatherData.today.date) }}</p>
             <div class="current-condition">
               <svg class="weather-icon" viewBox="0 0 128 128" width="144" height="144" aria-hidden="true">
-                <use :href="'/weather-icons.svg#' + weatherIcon(result.today.icon)"></use>
+                <use :href="'/weather-icons.svg#' + weatherIcon(weatherData.today.icon)"></use>
               </svg>
-              <p>{{ result.today.conditionDescription }}</p>
+              <p>{{ weatherData.today.conditionDescription }}</p>
             </div>
             <p class="average-temperature">
-              {{ formatTemperature(result.today.averageTemperature) }}
+              {{ formatTemperature(weatherData.today.averageTemperature) }}
             </p>
             <p class="average-label">Average temperature</p>
             <p
               class="temperature-category"
-              :class="'category-' + result.today.temperatureCategory.toLowerCase()"
+              :class="'category-' + weatherData.today.temperatureCategory.toLowerCase()"
             >
-              {{ result.today.temperatureCategory }}
+              {{ weatherData.today.temperatureCategory }}
             </p>
             <div class="high-low">
-              <span>Low <strong>{{ formatTemperature(result.today.minTemperature) }}</strong></span>
-              <span>High <strong>{{ formatTemperature(result.today.maxTemperature) }}</strong></span>
+              <span>Low <strong>{{ formatTemperature(weatherData.today.minTemperature) }}</strong></span>
+              <span>High <strong>{{ formatTemperature(weatherData.today.maxTemperature) }}</strong></span>
             </div>
           </section>
           <p v-else class="side-empty">
@@ -86,21 +83,27 @@
             </button>
           </section>
 
-          <section v-if="!loading && !error && !result" class="message-panel empty-panel">
-            <svg class="weather-icon empty-icon" viewBox="0 0 128 128" width="144" height="144" aria-hidden="true">
+          <section v-if="!loading && !error && !weatherData" class="message-panel empty-panel">
+            <svg
+              class="weather-icon empty-icon"
+              viewBox="0 0 128 128"
+              width="144"
+              height="144"
+              aria-hidden="true"
+            >
               <use href="/weather-icons.svg#partly-cloudy-day"></use>
             </svg>
             <h1>Three-day forecast</h1>
             <p>Your temperature, wind, rainfall and air-quality details will appear here.</p>
           </section>
 
-          <div v-if="result && !loading" class="weather-results">
+          <div v-if="weatherData && !loading" class="weather-results">
             <section class="forecast-section" aria-labelledby="forecast-title">
               <div class="section-heading">
                 <h1 id="forecast-title">Three-day forecast</h1>
                 <p>Local forecast</p>
               </div>
-              <p v-if="!result.hasThreeDays" class="notice">
+              <p v-if="!weatherData.hasThreeDays" class="notice">
                 OpenWeather returned fewer than three forecast days. The available days are shown below.
               </p>
               <div class="table-scroll" tabindex="0" aria-label="Scrollable forecast table">
@@ -115,11 +118,17 @@
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="day in result.days" :key="day.date">
+                    <tr v-for="day in weatherData.days" :key="day.date">
                       <th scope="row">{{ formatDate(day.date) }}</th>
                       <td class="weather-condition" data-label="Conditions">
                         <div class="condition-content">
-                          <svg class="weather-icon" viewBox="0 0 128 128" width="52" height="52" aria-hidden="true">
+                          <svg
+                            class="weather-icon"
+                            viewBox="0 0 128 128"
+                            width="52"
+                            height="52"
+                            aria-hidden="true"
+                          >
                             <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
                           </svg>
                           <span>{{ day.conditionDescription }}</span>
@@ -127,7 +136,8 @@
                       </td>
                       <td data-label="Temperature">
                         <span class="temperature-range">
-                          {{ formatTemperature(day.minTemperature) }} – {{ formatTemperature(day.maxTemperature) }}
+                          {{ formatTemperature(day.minTemperature) }} –
+                          {{ formatTemperature(day.maxTemperature) }}
                         </span>
                         <span
                           class="table-category"
@@ -149,34 +159,34 @@
                 <h2 id="packing-title">What to pack</h2>
                 <p
                   class="packing-advice"
-                  :class="result.packing.umbrellaNeeded ? 'needs-umbrella' : 'no-umbrella'"
+                  :class="weatherData.packing.umbrellaNeeded ? 'needs-umbrella' : 'no-umbrella'"
                 >
-                  {{ result.packing.umbrellaNeeded ? "Bring an umbrella" : "No umbrella needed" }}
+                  {{ weatherData.packing.umbrellaNeeded ? "Bring an umbrella" : "No umbrella needed" }}
                 </p>
-                <p class="temperature-advice">{{ result.packing.temperatureAdvice }}</p>
+                <p class="temperature-advice">{{ weatherData.packing.temperatureAdvice }}</p>
               </section>
 
               <section class="air-section" aria-labelledby="air-title">
                 <div class="air-heading">
                   <h2 id="air-title">Air quality</h2>
                   <p
-                    v-if="result.airQuality.available"
+                    v-if="weatherData.airQuality.available"
                     class="air-status"
-                    :class="'aqi-level-' + result.airQuality.aqi"
+                    :class="'aqi-level-' + weatherData.airQuality.aqi"
                   >
                     <span class="status-dot" aria-hidden="true"></span>
-                    {{ result.airQuality.aqiLabel }} · AQI {{ result.airQuality.aqi }}/5
+                    {{ weatherData.airQuality.aqiLabel }} · AQI {{ weatherData.airQuality.aqi }}/5
                   </p>
                 </div>
 
-                <p v-if="!result.airQuality.available" class="air-message">
-                  {{ result.airQuality.message }}
+                <p v-if="!weatherData.airQuality.available" class="air-message">
+                  {{ weatherData.airQuality.message }}
                 </p>
-                <p v-else-if="result.airQuality.warnings.length === 0" class="air-message">
+                <p v-else-if="weatherData.airQuality.warnings.length === 0" class="air-message">
                   All measured pollutants are within OpenWeather's Good range.
                 </p>
                 <ul v-else class="warning-list">
-                  <li v-for="warning in result.airQuality.warnings" :key="warning.name">
+                  <li v-for="warning in weatherData.airQuality.warnings" :key="warning.name">
                     <div class="warning-line">
                       <strong>{{ warning.name }}</strong>
                       <span>{{ formatNumber(warning.value) }} µg/m³ · {{ warning.category }}</span>
@@ -204,8 +214,7 @@
                     maxlength="100"
                     autocomplete="off"
                     placeholder="Lisbon, PT"
-                    required
-                  />
+                    required>
                   <button type="submit" :disabled="comparing || !comparisonCity.trim()">
                     {{ comparing ? "Comparing..." : "Compare" }}
                   </button>
@@ -220,18 +229,21 @@
                 {{ comparisonError }}
               </p>
 
-              <div v-if="comparisonResult" class="comparison-results">
+              <div v-if="comparisonData" class="comparison-results">
                 <div class="comparison-verdict">
                   <h3>Weather verdict</h3>
-                  <p aria-live="polite">{{ comparisonResult.comparison.verdict }}</p>
+                  <p aria-live="polite">{{ comparisonData.comparison.verdict }}</p>
                   <span>
                     Average temperatures differ by
-                    {{ formatTemperature(comparisonResult.comparison.temperatureDifference) }}.
+                    {{ formatTemperature(comparisonData.comparison.temperatureDifference) }}.
                   </span>
                 </div>
 
                 <p
-                  v-if="!comparisonResult.destinations[0].hasThreeDays || !comparisonResult.destinations[1].hasThreeDays"
+                  v-if="
+                    !comparisonData.destinations[0].hasThreeDays ||
+                    !comparisonData.destinations[1].hasThreeDays
+                  "
                   class="notice comparison-notice"
                 >
                   One city has fewer than three forecast days available. The available days are shown.
@@ -239,15 +251,18 @@
 
                 <div class="comparison-grid">
                   <article
-                    v-for="(destination, index) in comparisonResult.destinations"
+                    v-for="(destination, index) in comparisonData.destinations"
                     :key="destination.city.name + destination.city.country + index"
                     class="comparison-card"
-                    :class="{ 'comparison-card-winner': index === comparisonResult.comparison.betterWeatherIndex }"
+                    :class="{
+                      'comparison-card-winner':
+                        index === comparisonData.comparison.betterWeatherIndex
+                    }"
                   >
                     <div class="comparison-card-heading">
                       <h3>{{ formatCityName(destination.city) }}</h3>
                       <span
-                        v-if="index === comparisonResult.comparison.betterWeatherIndex"
+                        v-if="index === comparisonData.comparison.betterWeatherIndex"
                         class="winner-label"
                       >
                         Better forecast
@@ -257,12 +272,14 @@
                     <dl class="comparison-metrics">
                       <div>
                         <dt>Average temperature</dt>
-                        <dd>{{ formatTemperature(comparisonResult.comparison.metrics[index].averageTemperature) }}</dd>
+                        <dd>
+                          {{ formatTemperature(comparisonData.comparison.metrics[index].averageTemperature) }}
+                        </dd>
                       </div>
                       <div>
                         <dt>Rainy days</dt>
                         <dd>
-                          {{ comparisonResult.comparison.metrics[index].rainDays }} /
+                          {{ comparisonData.comparison.metrics[index].rainDays }} /
                           {{ destination.days.length }}
                         </dd>
                       </div>
@@ -271,7 +288,7 @@
                         <dd v-if="destination.airQuality.available">
                           {{ destination.airQuality.aqiLabel }} · AQI {{ destination.airQuality.aqi }}/5
                           <span
-                            v-if="index === comparisonResult.comparison.worseAirIndex"
+                            v-if="index === comparisonData.comparison.worseAirIndex"
                             class="worse-air-label"
                           >
                             Worse
@@ -284,12 +301,19 @@
                     <ul class="comparison-days" :aria-label="formatCityName(destination.city) + ' forecast'">
                       <li v-for="day in destination.days" :key="day.date">
                         <span class="comparison-day-date">{{ formatDate(day.date, true) }}</span>
-                        <svg class="weather-icon" viewBox="0 0 128 128" width="40" height="40" aria-hidden="true">
+                        <svg
+                          class="weather-icon"
+                          viewBox="0 0 128 128"
+                          width="40"
+                          height="40"
+                          aria-hidden="true"
+                        >
                           <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
                         </svg>
                         <span class="comparison-day-condition">{{ day.conditionDescription }}</span>
                         <span class="comparison-day-temperature">
-                          {{ formatTemperature(day.minTemperature) }} – {{ formatTemperature(day.maxTemperature) }}
+                          {{ formatTemperature(day.minTemperature) }} –
+                          {{ formatTemperature(day.maxTemperature) }}
                         </span>
                         <span class="comparison-day-details">
                           {{ formatNumber(day.averageWindSpeed) }} m/s wind ·
