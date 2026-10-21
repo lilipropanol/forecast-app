@@ -1,0 +1,229 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Weather Planner API",
+    "version": "1.0.0",
+    "description": "Endpoints used by the weather app."
+  },
+  "paths": {
+    "/api/weather": {
+      "get": {
+        "summary": "Get the forecast for one city",
+        "parameters": [
+          {
+            "name": "city",
+            "in": "query",
+            "required": true,
+            "description": "City name, optionally followed by a country code.",
+            "schema": { "type": "string", "example": "Dublin, IE" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Weather, packing advice and current air quality for the city.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WeatherResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/CityNotFound" },
+          "500": { "$ref": "#/components/responses/MissingApiKey" },
+          "502": { "$ref": "#/components/responses/WeatherServiceError" },
+          "default": { "$ref": "#/components/responses/OtherError" }
+        }
+      }
+    },
+    "/api/compare": {
+      "get": {
+        "summary": "Compare the forecasts for two cities",
+        "parameters": [
+          {
+            "name": "cities",
+            "in": "query",
+            "required": true,
+            "description": "Enter exactly two cities. Repeat the parameter to allow commas in country codes.",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "string" },
+              "example": ["Dublin", "Lisbon"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Both city forecasts and their comparison.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CompareResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/CityNotFound" },
+          "500": { "$ref": "#/components/responses/MissingApiKey" },
+          "502": { "$ref": "#/components/responses/WeatherServiceError" },
+          "default": { "$ref": "#/components/responses/OtherError" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } }
+      },
+      "City": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "state": { "type": "string" },
+          "country": { "type": "string" }
+        }
+      },
+      "DaySummary": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string", "format": "date" },
+          "icon": { "type": "string" },
+          "conditionDescription": { "type": "string" },
+          "minTemperature": { "type": "number" },
+          "maxTemperature": { "type": "number" },
+          "averageTemperature": { "type": "number" },
+          "temperatureCategory": {
+            "type": "string",
+            "enum": ["Cold", "Mild", "Hot"]
+          },
+          "averageWindSpeed": { "type": "number" },
+          "rainfall": { "type": "number" },
+          "rainExpected": { "type": "boolean" }
+        }
+      },
+      "PackingAdvice": {
+        "type": "object",
+        "properties": {
+          "umbrellaNeeded": { "type": "boolean" },
+          "umbrellaAdvice": { "type": "string" },
+          "temperatureAdvice": { "type": "string" }
+        }
+      },
+      "PollutantWarning": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "number" },
+          "category": { "type": "string" },
+          "healthRisk": { "type": "string" }
+        }
+      },
+      "AirQuality": {
+        "type": "object",
+        "required": ["available"],
+        "properties": {
+          "available": { "type": "boolean" },
+          "message": { "type": "string" },
+          "aqi": { "type": "integer", "nullable": true },
+          "aqiLabel": { "type": "string" },
+          "warnings": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PollutantWarning" }
+          }
+        }
+      },
+      "WeatherResult": {
+        "type": "object",
+        "properties": {
+          "city": { "$ref": "#/components/schemas/City" },
+          "today": { "$ref": "#/components/schemas/DaySummary" },
+          "days": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DaySummary" }
+          },
+          "packing": { "$ref": "#/components/schemas/PackingAdvice" },
+          "airQuality": { "$ref": "#/components/schemas/AirQuality" },
+          "hasThreeDays": { "type": "boolean" }
+        }
+      },
+      "CityMetrics": {
+        "type": "object",
+        "properties": {
+          "averageTemperature": { "type": "number" },
+          "rainDays": { "type": "integer" },
+          "mildDays": { "type": "integer" },
+          "aqi": { "type": "integer", "nullable": true }
+        }
+      },
+      "CityComparison": {
+        "type": "object",
+        "properties": {
+          "metrics": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CityMetrics" }
+          },
+          "temperatureDifference": { "type": "number" },
+          "betterWeatherIndex": { "type": "integer", "nullable": true },
+          "worseAirIndex": { "type": "integer", "nullable": true },
+          "verdict": { "type": "string" }
+        }
+      },
+      "CompareResult": {
+        "type": "object",
+        "properties": {
+          "destinations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/WeatherResult" }
+          },
+          "comparison": { "$ref": "#/components/schemas/CityComparison" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "A required city name is missing or invalid.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiError" }
+          }
+        }
+      },
+      "CityNotFound": {
+        "description": "OpenWeather could not find one of the requested cities.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiError" }
+          }
+        }
+      },
+      "MissingApiKey": {
+        "description": "The server does not have an OpenWeather API key.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiError" }
+          }
+        }
+      },
+      "WeatherServiceError": {
+        "description": "The server could not connect to OpenWeather or did not receive enough forecast data.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiError" }
+          }
+        }
+      },
+      "OtherError": {
+        "description": "Another error returned by OpenWeather.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ApiError" }
+          }
+        }
+      }
+    }
+  }
+}
