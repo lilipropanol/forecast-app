@@ -1,0 +1,13 @@
+sequenceDiagram
+    participant B as Browser
+    participant S as Express
+    participant O as OpenWeather
+    B->>S: GET /api/weather?city=Dublin
+    S->>O: Geocoding (city name)
+    O-->>S: lat, lon
+    S->>O: Forecast (lat, lon)
+    O-->>S: 3-hourly readings
+    S->>O: Air Pollution (lat, lon)
+    O-->>S: AQI and pollutants (optional)
+    S->>S: group into days, packing advice, warnings
+    S-->>B: JSON { city, today, days, packing, airQuality }
