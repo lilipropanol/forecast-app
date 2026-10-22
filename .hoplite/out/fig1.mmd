@@ -1,0 +1,29 @@
+flowchart LR
+    subgraph Browser
+        Page["Vue page<br/>index.html, app.js, style.css"]
+    end
+
+    subgraph Server["Node.js + Express server"]
+        direction TB
+        Static["express.static<br/>serves /public"]
+        WeatherRoute["GET /api/weather"]
+        CompareRoute["GET /api/compare"]
+        Lookup["getWeatherForCity(city)<br/>daily summaries, packing advice,<br/>air-quality warnings"]
+    end
+
+    subgraph OpenWeather["OpenWeather APIs"]
+        direction TB
+        Geo["Geocoding"]
+        Forecast["5-day / 3-hour Forecast"]
+        Air["Air Pollution"]
+    end
+
+    Page -->|"load page"| Static
+    Page -->|"search one city"| WeatherRoute
+    Page -->|"compare two cities"| CompareRoute
+    WeatherRoute --> Lookup
+    CompareRoute -->|"×2 with Promise.all"| Lookup
+    Lookup -->|"city name"| Geo
+    Lookup -->|"lat, lon"| Forecast
+    Lookup -->|"lat, lon"| Air
+    Lookup -.->|"JSON"| Page
