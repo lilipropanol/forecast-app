@@ -1,0 +1,69 @@
+---
+config:
+  theme: base
+  look: classic
+  fontFamily: Trebuchet MS, Trebuchet, sans-serif
+  themeVariables:
+    background: "#ffffff"
+    primaryTextColor: "#263b4a"
+    lineColor: "#344454"
+    actorBkg: "#f4f7fa"
+    actorBorder: "#8da2b5"
+    actorTextColor: "#263b4a"
+    actorLineColor: "#95a4b2"
+    signalColor: "#344454"
+    signalTextColor: "#263b4a"
+    labelBoxBkgColor: "#f2f2f2"
+    labelBoxBorderColor: "#d5d9de"
+    labelTextColor: "#263b4a"
+    activationBkgColor: "#eff9f7"
+    activationBorderColor: "#79c7bb"
+  sequence:
+    diagramMarginX: 46
+    diagramMarginY: 20
+    actorMargin: 125
+    width: 165
+    height: 62
+    boxTextMargin: 8
+    messageMargin: 32
+    actorFontSize: 19
+    actorFontWeight: 600
+    actorFontFamily: Trebuchet MS, Trebuchet, sans-serif
+    messageFontSize: 17
+    messageFontWeight: 600
+    messageFontFamily: Trebuchet MS, Trebuchet, sans-serif
+    mirrorActors: true
+  themeCSS: |
+    rect.actor { rx: 12px !important; ry: 12px !important; }
+    rect.actor[name="B"] { fill: #f4f7fa !important; stroke: #8da2b5 !important; stroke-width: 2.2px !important; }
+    rect.actor[name="E"] { fill: #eff9f7 !important; stroke: #79c7bb !important; stroke-width: 2.2px !important; }
+    rect.actor[name="OW"] { fill: #fff8ef !important; stroke: #dfa56f !important; stroke-width: 2.2px !important; }
+    .actor-line { stroke: #95a4b2 !important; stroke-width: 1.8px !important; }
+    .messageLine0, .messageLine1 { stroke: #344454 !important; stroke-width: 2.2px !important; }
+    .messageText, .labelText, .loopText, text.actor { font-family: "Trebuchet MS", Trebuchet, sans-serif !important; font-weight: 600 !important; fill: #263b4a !important; }
+    .labelBox { rx: 8px; ry: 8px; fill: #f2f2f2 !important; stroke: #d5d9de !important; }
+---
+sequenceDiagram
+    participant B as Browser
+    participant E as Express
+    participant OW as OpenWeather APIs
+
+    B->>E: GET /api/weather?city=Dublin
+    E->>OW: Geocoding (city name)
+    OW-->>E: City name and coordinates
+
+    par Current weather
+        E->>OW: Current Weather (lat, lon)
+        OW-->>E: Current conditions
+    and 5-day / 3-hour forecast
+        E->>OW: Forecast (lat, lon)
+        OW-->>E: 3-hour readings
+    end
+
+    opt Air Pollution (optional)
+        E->>OW: Air Pollution (lat, lon)
+        OW-->>E: AQI and pollutants, if available
+    end
+
+    E->>E: Group readings by local day
+    E-->>B: JSON response: city, today, days, packing, airQuality

@@ -38,7 +38,7 @@ const app = Vue.createApp({
             this.mapError = "";
 
             try {
-                // Ask our server for the weather in this city.
+                // ask the server for this city's weather
                 const response = await fetch("/api/weather?city=" + encodeURIComponent(cityName));
                 this.weatherData = await this.readJsonResponse(response);
             } catch (requestError) {
@@ -91,7 +91,7 @@ const app = Vue.createApp({
             return [city.name, city.state, city.country].filter(Boolean).join(", ");
         },
         async readJsonResponse(response) {
-            // The server API should send JSON, not a web page.
+            // make sure the server sent json
             const contentType = response.headers.get("content-type") || "";
             if (!contentType.includes("application/json")) {
                 throw new Error(
@@ -234,7 +234,7 @@ const app = Vue.createApp({
             }).format(date);
         },
         weatherIcon(iconCode) {
-            // Match OpenWeather's code to an icon in weather-icons.svg.
+            // match the weather code to one of our icons
             const code = String(iconCode || "");
             const group = code.slice(0, 2);
             const night = code.endsWith("n");

@@ -1,0 +1,69 @@
+---
+config:
+  theme: base
+  look: classic
+  layout: elk
+  fontFamily: Trebuchet MS, Trebuchet, sans-serif
+  themeVariables:
+    background: "#ffffff"
+    fontFamily: Trebuchet MS, Trebuchet, sans-serif
+    fontSize: 19px
+    primaryTextColor: "#263b4a"
+    lineColor: "#344454"
+    edgeLabelBackground: "#f2f2f2"
+  flowchart:
+    diagramPadding: 60
+    htmlLabels: true
+    wrappingWidth: 330
+    padding: 2
+    nodeSpacing: 28
+    rankSpacing: 75
+    curve: rounded
+    subGraphTitleMargin:
+      top: 14
+      bottom: 8
+  themeCSS: |
+    .edgeLabel, .edgeLabel rect { background-color: #f2f2f2 !important; }
+    foreignObject { overflow: visible; }
+    .browser-label { display: block; position: relative; width: 175px; padding: 12px; line-height: 1.4; text-align: center; }
+    .mapbox-card { position: absolute; left: 50%; bottom: calc(100% + 76px); transform: translateX(-50%); width: 205px; box-sizing: border-box; padding: 14px 10px; border: 2px solid #dfa56f; border-radius: 12px; background: #fff8ef; line-height: 1.4; white-space: nowrap; }
+    .basemap-link { position: absolute; left: 50%; top: 100%; width: 0; height: 74px; border-left: 2px solid #344454; }
+    .basemap-link span { position: absolute; left: -43px; top: 24px; width: 84px; line-height: 23px; background: #f2f2f2; font-size: 17px; color: #344454; }
+    .basemap-link::after { content: ""; position: absolute; bottom: -1px; left: -5px; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 8px solid #344454; }
+    .box .label foreignObject div { padding: 13px; }
+    .node rect, .cluster rect { rx: 12px; ry: 12px; }
+    .edgeLabel rect { rx: 6px; ry: 6px; }
+    .node rect { filter: drop-shadow(0 2px 2px rgba(38,59,74,.10)); }
+    .api-list, .api-list p { margin: 0 !important; padding: 0 !important; line-height: 1.2 !important; }
+---
+flowchart LR
+    page["<div class='browser-label'><b>Browser</b><br/>Vue app<br/>Mapbox GL JS<div class='mapbox-card'><b>Mapbox</b><br/>Standard basemap<div class='basemap-link'><span>Basemap</span></div></div></div>"]
+
+    subgraph S["<b>Node.js + Express server</b>"]
+        files["<b>Static files</b><br/>express.static<br/>serves /public"]
+        weatherRoute["<b>API routes</b><br/>GET /api/weather<br/>GET /api/weather-at"]
+        lookup["<b>Weather lookups</b><br/>getWeatherForCity()<br/>getWeatherForCoordinates()"]
+        configTiles["<b>Mapbox config and tile proxy</b><br/>GET /api/config<br/>GET /api/weather-map/<br/>:layer/:z/:x/:y.png"]
+        files ~~~ weatherRoute
+        weatherRoute --> lookup
+    end
+
+    subgraph O["<b>OpenWeather APIs</b>"]
+        weatherApis["<div class='api-list'>Geocoding<br/>Reverse Geocoding<br/>Current Weather<br/>5-day / 3-hour Forecast<br/>Air Pollution<br/>Weather Maps</div>"]
+    end
+
+    page -->|Page files| files
+    page -->|City search / map pin| weatherRoute
+    page -->|Mapbox token / weather tiles| configTiles
+    lookup -->|City / coordinate requests| weatherApis
+    configTiles -->|Weather tiles| weatherApis
+
+    classDef box fill:#ffffff,stroke:#526172,stroke-width:2px,color:#263b4a
+    classDef api fill:transparent,stroke:transparent,color:#263b4a
+    class files,weatherRoute,lookup,configTiles box
+    class weatherApis api
+    style page fill:#f4f7fa,stroke:#8da2b5,stroke-width:2px,color:#263b4a
+    style S fill:#eff9f7,stroke:#79c7bb,stroke-width:2px,color:#263b4a
+    style O fill:#fff8ef,stroke:#dfa56f,stroke-width:2px,color:#263b4a
+    linkStyle default stroke:#344454,stroke-width:2px,color:#344454
+    linkStyle 0 opacity:0,stroke:transparent,stroke-width:0px

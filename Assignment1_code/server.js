@@ -7,12 +7,12 @@ const host = process.env.HOST || "127.0.0.1";
 const apiKey = process.env.OPENWEATHER_API_KEY;
 const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN || "";
 
-// The browser needs this public token to load the Mapbox map.
+// send the public token so the map can load
 app.get("/api/config", (req, res) => {
     res.json({ mapboxToken });
 });
 
-// The browser calls this route with a city name.
+// look up weather for a typed city
 app.get("/api/weather", async (req, res) => {
     const city = typeof req.query.city === "string" ? req.query.city.trim() : "";
 
@@ -35,7 +35,7 @@ app.get("/api/weather", async (req, res) => {
     }
 });
 
-// The map calls this route when someone clicks a point.
+// look up weather for a clicked point
 app.get("/api/weather-at", async (req, res) => {
     const latitude = typeof req.query.lat === "string" ? req.query.lat.trim() : "";
     const longitude = typeof req.query.lon === "string" ? req.query.lon.trim() : "";
@@ -63,7 +63,7 @@ app.get("/api/weather-at", async (req, res) => {
     }
 });
 
-// Mapbox asks our server for each visible weather tile.
+// get weather map tiles without exposing the openweather key
 app.get("/api/weather-map/:layer/:z/:x/:y.png", async (req, res) => {
     const layer = req.params.layer;
     const zoom = Number(req.params.z);
@@ -96,7 +96,7 @@ app.get("/api/weather-map/:layer/:z/:x/:y.png", async (req, res) => {
             return res.sendStatus(tileResponse.status);
         }
 
-        // Keep the image in memory and pass it back to Mapbox.
+        // send the tile image back to the map
         const image = Buffer.from(await tileResponse.arrayBuffer());
         return res.type("png").send(image);
     } catch {
@@ -106,9 +106,9 @@ app.get("/api/weather-map/:layer/:z/:x/:y.png", async (req, res) => {
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// A city name must be converted to coordinates before requesting its forecast.
+// find the city coordinates first
 async function getWeatherForCity(city) {
-    // The forecast API needs coordinates, so look up the city first.
+    // the weather requests need coordinates
     const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
     locationUrl.search = new URLSearchParams({ q: city, limit: "1", appid: apiKey });
     const locations = await getOpenWeatherJson(locationUrl);
@@ -123,7 +123,7 @@ async function getWeatherForCity(city) {
     return getWeatherForCoordinates(location.lat, location.lon, location);
 }
 
-// City searches and map pins use the same forecast steps here.
+// city searches and map pins use the same weather lookup
 async function getWeatherForCoordinates(lat, lon, location) {
     const currentUrl = new URL("https://api.openweathermap.org/data/2.5/weather");
     currentUrl.search = new URLSearchParams({
@@ -139,13 +139,13 @@ async function getWeatherForCoordinates(lat, lon, location) {
         units: "metric",
         appid: apiKey
     });
-    // Both requests use the same coordinates, so start them together.
+    // get current weather and forecast at the same time
     const [current, forecast] = await Promise.all([
         getOpenWeatherJson(currentUrl),
         getOpenWeatherJson(forecastUrl)
     ]);
     const timezoneOffset = forecast.city.timezone || 0;
-    // Make daily summaries, then keep today separate from the next three days.
+    // keep today separate from the next three days
     const dailySummaries = makeDailySummaries(
         forecast.list,
         timezoneOffset
@@ -159,7 +159,7 @@ async function getWeatherForCoordinates(lat, lon, location) {
         throw error;
     }
 
-    // Air quality is separate, so the forecast can still load if this fails.
+    // the forecast still works if air quality fails
     let airQuality;
     try {
         const airUrl = new URL("https://api.openweathermap.org/data/2.5/air_pollution");
@@ -201,13 +201,13 @@ async function getWeatherForCoordinates(lat, lon, location) {
     };
 }
 
-// Find the next forecast period with a good chance of rain for the map card.
+// find the next likely rain time for the map
 function makeMapSummary(readings, timezoneOffset) {
     const now = Math.floor(Date.now() / 1000);
     const nextThreeDays = (readings || []).filter(
         (reading) => reading.dt >= now && reading.dt <= now + 3 * 24 * 60 * 60
     );
-    // Only call it likely when the forecast gives it at least a 50% chance.
+    // use 50% as the cutoff for likely rain
     const nextRain = nextThreeDays.find((reading) => (reading.pop || 0) >= 0.5);
 
     return {
@@ -221,7 +221,7 @@ function makeMapSummary(readings, timezoneOffset) {
     };
 }
 
-// Reverse geocoding is only used for the place name shown beside the pin.
+// get a place name for a map pin
 async function getLocationForCoordinates(lat, lon) {
     try {
         const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/reverse");
@@ -234,7 +234,7 @@ async function getLocationForCoordinates(lat, lon) {
         const locations = await getOpenWeatherJson(locationUrl);
         if (locations.length) return locations[0];
     } catch {
-        // A nearby place name is helpful, but the coordinates are enough for a forecast.
+        // the coordinates still work if no place name is found
     }
 
     return { name: "Pinned location", state: "", country: "" };
@@ -250,7 +250,7 @@ async function getOpenWeatherJson(url) {
         throw networkError;
     }
 
-    // Convert OpenWeather's JSON response into a JavaScript object.
+    // read the response from openweather
     const data = await response.json();
     if (!response.ok) {
         const error = new Error(
@@ -262,7 +262,7 @@ async function getOpenWeatherJson(url) {
     return data;
 }
 
-// The forecast has readings every three hours, so group them by local date.
+// group the three-hour readings by local date
 function makeDailySummaries(readings, timezoneOffset) {
     const daysByDate = new Map();
 

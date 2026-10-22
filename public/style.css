@@ -1,4 +1,4 @@
-/* Main colours and default text */
+/* colours and text */
 :root {
   color-scheme: light;
   --page: #e2f2fa;
@@ -50,7 +50,7 @@ button {
   background: var(--main-surface);
 }
 
-/* City search and today's weather */
+/* search and today's weather */
 .side-panel {
   display: flex;
   flex-direction: column;
@@ -235,7 +235,7 @@ button {
   font-size: 17px;
 }
 
-/* Forecast and the information cards */
+/* forecast and info cards */
 .main-panel {
   display: flex;
   align-items: center;
@@ -625,7 +625,7 @@ button {
   }
 }
 
-/* Put the cards in one column on smaller screens */
+/* stack the cards on smaller screens */
 @media (max-width: 1200px) {
   .details-grid {
     grid-template-columns: 1fr;
@@ -753,7 +753,7 @@ button {
   font-size: 15px;
 }
 
-/* Put the sidebar above the forecast */
+/* move the sidebar above the forecast */
 @media (max-width: 1000px) {
   .weather-shell {
     display: block;
@@ -778,7 +778,7 @@ button {
   }
 }
 
-/* Smaller layout for phones */
+/* phone layout */
 @media (max-width: 650px) {
   .side-panel {
     padding: 24px 20px 28px;

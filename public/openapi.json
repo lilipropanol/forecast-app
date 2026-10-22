@@ -3,12 +3,50 @@
   "info": {
     "title": "Weather Planner API",
     "version": "1.0.0",
-    "description": "Endpoints used by the weather app."
+    "description": "Weather search and map endpoints used by the Weather Planner."
   },
+  "tags": [
+    {
+      "name": "Weather",
+      "description": "Weather lookups by city or map coordinates."
+    },
+    {
+      "name": "Map",
+      "description": "Map configuration and proxied weather tiles."
+    }
+  ],
   "paths": {
+    "/api/config": {
+      "get": {
+        "tags": ["Map"],
+        "summary": "Get public map configuration",
+        "description": "Returns the public Mapbox token used by the browser to load the basemap. An empty token means Mapbox is not configured.",
+        "responses": {
+          "200": {
+            "description": "Mapbox configuration for the browser.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["mapboxToken"],
+                  "properties": {
+                    "mapboxToken": {
+                      "type": "string",
+                      "description": "Public Mapbox access token, or an empty string if not configured."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/weather": {
       "get": {
+        "tags": ["Weather"],
         "summary": "Get the forecast for one city",
+        "description": "Looks up the city with OpenWeather Geocoding, then returns its current weather, forecast, packing advice and air quality.",
         "parameters": [
           {
             "name": "city",
@@ -52,6 +90,7 @@
     },
     "/api/weather-at": {
       "get": {
+        "tags": ["Weather"],
         "summary": "Get the forecast for a map point",
         "description": "Uses the clicked coordinates for current weather, forecast and air-quality lookups, and reverse geocoding for the nearby place name.",
         "parameters": [
@@ -106,6 +145,7 @@
     },
     "/api/weather-map/{layer}/{z}/{x}/{y}.png": {
       "get": {
+        "tags": ["Map"],
         "summary": "Get a weather map tile",
         "description": "Express fetches a temperature or precipitation tile from OpenWeather so the OpenWeather API key stays on the server.",
         "parameters": [
@@ -387,7 +427,7 @@
         }
       },
       "CityNotFound": {
-        "description": "OpenWeather could not find one of the requested cities.",
+        "description": "OpenWeather could not find the requested city.",
         "content": {
           "application/json": {
             "schema": {
