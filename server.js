@@ -5,6 +5,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || "127.0.0.1";
 const apiKey = process.env.OPENWEATHER_API_KEY;
+const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN || "";
+
+// The browser needs this public token to load the Mapbox map.
+app.get("/api/config", (req, res) => {
+    res.json({ mapboxToken });
+});
 
 // The browser calls this route with a city name.
 app.get("/api/weather", async (req, res) => {
@@ -29,14 +35,18 @@ app.get("/api/weather", async (req, res) => {
     }
 });
 
-// The browser sends both city names in the URL.
-app.get("/api/compare", async (req, res) => {
-    const cities = getRequestedCities(req.query.cities);
+// The map calls this route when someone clicks a point.
+app.get("/api/weather-at", async (req, res) => {
+    const latitude = typeof req.query.lat === "string" ? req.query.lat.trim() : "";
+    const longitude = typeof req.query.lon === "string" ? req.query.lon.trim() : "";
+    const lat = latitude ? Number(latitude) : NaN;
+    const lon = longitude ? Number(longitude) : NaN;
 
-    if (cities.length !== 2 || cities.some((city) => !city || city.length > 100)) {
-        return res.status(400).json({
-            error: "Enter two city names, for example Dublin and Lisbon."
-        });
+    if (
+        !Number.isFinite(lat) || !Number.isFinite(lon) ||
+        lat < -90 || lat > 90 || lon < -180 || lon > 180
+    ) {
+        return res.status(400).json({ error: "Choose a valid point on the map." });
     }
 
     if (!apiKey) {
@@ -46,34 +56,57 @@ app.get("/api/compare", async (req, res) => {
     }
 
     try {
-        // Both requests can run at the same time, so wait for them together.
-        const destinations = await Promise.all(
-            cities.map((city) => getWeatherForCity(city))
-        );
-
-        return res.json({
-            destinations,
-            comparison: makeCityComparison(destinations)
-        });
+        const location = await getLocationForCoordinates(lat, lon);
+        return res.json(await getWeatherForCoordinates(lat, lon, location));
     } catch (error) {
         return res.status(error.status || 502).json({ error: error.message });
     }
 });
 
+// Mapbox asks our server for each visible weather tile.
+app.get("/api/weather-map/:layer/:z/:x/:y.png", async (req, res) => {
+    const layer = req.params.layer;
+    const zoom = Number(req.params.z);
+    const tileX = Number(req.params.x);
+    const tileY = Number(req.params.y);
+    const tilesAtZoom = 2 ** zoom;
+
+    if (
+        !["precipitation_new", "temp_new"].includes(layer) ||
+        ![zoom, tileX, tileY].every(Number.isInteger) ||
+        zoom < 0 || zoom > 18 ||
+        tileX < 0 || tileY < 0 ||
+        tileX >= tilesAtZoom || tileY >= tilesAtZoom
+    ) {
+        return res.sendStatus(400);
+    }
+
+    if (!apiKey) {
+        return res.sendStatus(500);
+    }
+
+    const tileUrl = new URL(
+        `https://tile.openweathermap.org/map/${layer}/${zoom}/${tileX}/${tileY}.png`
+    );
+    tileUrl.search = new URLSearchParams({ appid: apiKey });
+
+    try {
+        const tileResponse = await fetch(tileUrl);
+        if (!tileResponse.ok) {
+            return res.sendStatus(tileResponse.status);
+        }
+
+        // Keep the image in memory and pass it back to Mapbox.
+        const image = Buffer.from(await tileResponse.arrayBuffer());
+        return res.type("png").send(image);
+    } catch {
+        return res.sendStatus(502);
+    }
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
-// Repeated values let a city with a country code keep its comma.
-function getRequestedCities(value) {
-    if (Array.isArray(value)) {
-        return value.map((city) => String(city).trim());
-    }
-    if (typeof value === "string") {
-        return value.split(",").map((city) => city.trim());
-    }
-    return [];
-}
-
-// Both routes use this to get the weather for one city.
+// A city name must be converted to coordinates before requesting its forecast.
 async function getWeatherForCity(city) {
     // The forecast API needs coordinates, so look up the city first.
     const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
@@ -87,18 +120,35 @@ async function getWeatherForCity(city) {
     }
 
     const location = locations[0];
-    const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
-    forecastUrl.search = new URLSearchParams({
-        lat: String(location.lat),
-        lon: String(location.lon),
+    return getWeatherForCoordinates(location.lat, location.lon, location);
+}
+
+// City searches and map pins use the same forecast steps here.
+async function getWeatherForCoordinates(lat, lon, location) {
+    const currentUrl = new URL("https://api.openweathermap.org/data/2.5/weather");
+    currentUrl.search = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
         units: "metric",
         appid: apiKey
     });
-    const forecast = await getOpenWeatherJson(forecastUrl);
+    const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
+    forecastUrl.search = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        units: "metric",
+        appid: apiKey
+    });
+    // Both requests use the same coordinates, so start them together.
+    const [current, forecast] = await Promise.all([
+        getOpenWeatherJson(currentUrl),
+        getOpenWeatherJson(forecastUrl)
+    ]);
+    const timezoneOffset = forecast.city.timezone || 0;
     // Make daily summaries, then keep today separate from the next three days.
     const dailySummaries = makeDailySummaries(
         forecast.list,
-        forecast.city.timezone || 0
+        timezoneOffset
     );
     const today = dailySummaries[0];
     const days = dailySummaries.slice(1, 4);
@@ -114,8 +164,8 @@ async function getWeatherForCity(city) {
     try {
         const airUrl = new URL("https://api.openweathermap.org/data/2.5/air_pollution");
         airUrl.search = new URLSearchParams({
-            lat: String(location.lat),
-            lon: String(location.lon),
+            lat: String(lat),
+            lon: String(lon),
             appid: apiKey
         });
         const airData = await getOpenWeatherJson(airUrl);
@@ -133,6 +183,16 @@ async function getWeatherForCity(city) {
             state: location.state || "",
             country: location.country || ""
         },
+        coordinates: {
+            lat,
+            lon
+        },
+        currentWeather: {
+            temperature: current.main.temp,
+            conditionDescription: current.weather[0].description,
+            icon: current.weather[0].icon
+        },
+        mapSummary: makeMapSummary(forecast.list, timezoneOffset),
         today,
         days,
         packing: makePackingAdvice(days),
@@ -141,73 +201,43 @@ async function getWeatherForCity(city) {
     };
 }
 
-function formatCityName(city) {
-    return [city.name, city.state, city.country].filter(Boolean).join(", ");
-}
-
-// Fewer rainy days wins. If they tie, the city with more Mild days wins.
-function makeCityComparison(destinations) {
-    const cityStats = destinations.map((destination) => {
-        const days = destination.days;
-        return {
-            averageTemperature:
-                days.reduce((total, day) => total + day.averageTemperature, 0) / days.length,
-            rainDays: days.filter((day) => day.rainExpected).length,
-            mildDays: days.filter((day) => day.temperatureCategory === "Mild").length,
-            aqi: destination.airQuality.available ? destination.airQuality.aqi : null
-        };
-    });
-
-    let betterWeatherIndex = null;
-    if (cityStats[0].rainDays !== cityStats[1].rainDays) {
-        betterWeatherIndex = cityStats[0].rainDays < cityStats[1].rainDays ? 0 : 1;
-    } else if (cityStats[0].mildDays !== cityStats[1].mildDays) {
-        betterWeatherIndex = cityStats[0].mildDays > cityStats[1].mildDays ? 0 : 1;
-    }
-
-    let worseAirIndex = null;
-    if (
-        cityStats[0].aqi !== null &&
-        cityStats[1].aqi !== null &&
-        cityStats[0].aqi !== cityStats[1].aqi
-    ) {
-        worseAirIndex = cityStats[0].aqi > cityStats[1].aqi ? 0 : 1;
-    }
-
-    const cityNames = destinations.map((destination) => formatCityName(destination.city));
-    const weatherVerdict = betterWeatherIndex === null
-        ? "Neither forecast has a clear weather advantage"
-        : cityNames[betterWeatherIndex] + " has the better forecast";
-
-    let umbrellaVerdict;
-    if (cityStats[0].rainDays && cityStats[1].rainDays) {
-        umbrellaVerdict = "Both cities may need an umbrella";
-    } else if (cityStats[0].rainDays) {
-        umbrellaVerdict = cityNames[0] + " may need an umbrella";
-    } else if (cityStats[1].rainDays) {
-        umbrellaVerdict = cityNames[1] + " may need an umbrella";
-    } else {
-        umbrellaVerdict = "Neither city is forecast to have rain";
-    }
-
-    let airVerdict;
-    if (cityStats[0].aqi === null || cityStats[1].aqi === null) {
-        airVerdict = "Air quality is unavailable for comparison";
-    } else if (worseAirIndex === null) {
-        airVerdict = "Both cities have the same AQI";
-    } else {
-        airVerdict = cityNames[worseAirIndex] + " has worse air quality";
-    }
+// Find the next forecast period with a good chance of rain for the map card.
+function makeMapSummary(readings, timezoneOffset) {
+    const now = Math.floor(Date.now() / 1000);
+    const nextThreeDays = (readings || []).filter(
+        (reading) => reading.dt >= now && reading.dt <= now + 3 * 24 * 60 * 60
+    );
+    // Only call it likely when the forecast gives it at least a 50% chance.
+    const nextRain = nextThreeDays.find((reading) => (reading.pop || 0) >= 0.5);
 
     return {
-        metrics: cityStats,
-        temperatureDifference: Math.abs(
-            cityStats[0].averageTemperature - cityStats[1].averageTemperature
-        ),
-        betterWeatherIndex,
-        worseAirIndex,
-        verdict: [weatherVerdict, umbrellaVerdict, airVerdict].join(". ") + "."
+        timezoneOffset,
+        nextRain: nextRain
+            ? {
+                time: nextRain.dt,
+                chance: Math.round((nextRain.pop || 0) * 100)
+            }
+            : null
     };
+}
+
+// Reverse geocoding is only used for the place name shown beside the pin.
+async function getLocationForCoordinates(lat, lon) {
+    try {
+        const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/reverse");
+        locationUrl.search = new URLSearchParams({
+            lat: String(lat),
+            lon: String(lon),
+            limit: "1",
+            appid: apiKey
+        });
+        const locations = await getOpenWeatherJson(locationUrl);
+        if (locations.length) return locations[0];
+    } catch {
+        // A nearby place name is helpful, but the coordinates are enough for a forecast.
+    }
+
+    return { name: "Pinned location", state: "", country: "" };
 }
 
 async function getOpenWeatherJson(url) {

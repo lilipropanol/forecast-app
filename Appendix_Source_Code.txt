@@ -1,4 +1,5 @@
 server.js
+
 const express = require("express");
 const path = require("node:path");
 
@@ -6,6 +7,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || "127.0.0.1";
 const apiKey = process.env.OPENWEATHER_API_KEY;
+const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN || "";
+
+// The browser needs this public token to load the Mapbox map.
+app.get("/api/config", (req, res) => {
+    res.json({ mapboxToken });
+});
 
 // The browser calls this route with a city name.
 app.get("/api/weather", async (req, res) => {
@@ -30,14 +37,18 @@ app.get("/api/weather", async (req, res) => {
     }
 });
 
-// The browser sends both city names in the URL.
-app.get("/api/compare", async (req, res) => {
-    const cities = getRequestedCities(req.query.cities);
+// The map calls this route when someone clicks a point.
+app.get("/api/weather-at", async (req, res) => {
+    const latitude = typeof req.query.lat === "string" ? req.query.lat.trim() : "";
+    const longitude = typeof req.query.lon === "string" ? req.query.lon.trim() : "";
+    const lat = latitude ? Number(latitude) : NaN;
+    const lon = longitude ? Number(longitude) : NaN;
 
-    if (cities.length !== 2 || cities.some((city) => !city || city.length > 100)) {
-        return res.status(400).json({
-            error: "Enter two city names, for example Dublin and Lisbon."
-        });
+    if (
+        !Number.isFinite(lat) || !Number.isFinite(lon) ||
+        lat < -90 || lat > 90 || lon < -180 || lon > 180
+    ) {
+        return res.status(400).json({ error: "Choose a valid point on the map." });
     }
 
     if (!apiKey) {
@@ -47,34 +58,57 @@ app.get("/api/compare", async (req, res) => {
     }
 
     try {
-        // Both requests can run at the same time, so wait for them together.
-        const destinations = await Promise.all(
-            cities.map((city) => getWeatherForCity(city))
-        );
-
-        return res.json({
-            destinations,
-            comparison: makeCityComparison(destinations)
-        });
+        const location = await getLocationForCoordinates(lat, lon);
+        return res.json(await getWeatherForCoordinates(lat, lon, location));
     } catch (error) {
         return res.status(error.status || 502).json({ error: error.message });
     }
 });
 
+// Mapbox asks our server for each visible weather tile.
+app.get("/api/weather-map/:layer/:z/:x/:y.png", async (req, res) => {
+    const layer = req.params.layer;
+    const zoom = Number(req.params.z);
+    const tileX = Number(req.params.x);
+    const tileY = Number(req.params.y);
+    const tilesAtZoom = 2 ** zoom;
+
+    if (
+        !["precipitation_new", "temp_new"].includes(layer) ||
+        ![zoom, tileX, tileY].every(Number.isInteger) ||
+        zoom < 0 || zoom > 18 ||
+        tileX < 0 || tileY < 0 ||
+        tileX >= tilesAtZoom || tileY >= tilesAtZoom
+    ) {
+        return res.sendStatus(400);
+    }
+
+    if (!apiKey) {
+        return res.sendStatus(500);
+    }
+
+    const tileUrl = new URL(
+        `https://tile.openweathermap.org/map/${layer}/${zoom}/${tileX}/${tileY}.png`
+    );
+    tileUrl.search = new URLSearchParams({ appid: apiKey });
+
+    try {
+        const tileResponse = await fetch(tileUrl);
+        if (!tileResponse.ok) {
+            return res.sendStatus(tileResponse.status);
+        }
+
+        // Keep the image in memory and pass it back to Mapbox.
+        const image = Buffer.from(await tileResponse.arrayBuffer());
+        return res.type("png").send(image);
+    } catch {
+        return res.sendStatus(502);
+    }
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
-// Repeated values let a city with a country code keep its comma.
-function getRequestedCities(value) {
-    if (Array.isArray(value)) {
-        return value.map((city) => String(city).trim());
-    }
-    if (typeof value === "string") {
-        return value.split(",").map((city) => city.trim());
-    }
-    return [];
-}
-
-// Both routes use this to get the weather for one city.
+// A city name must be converted to coordinates before requesting its forecast.
 async function getWeatherForCity(city) {
     // The forecast API needs coordinates, so look up the city first.
     const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
@@ -88,18 +122,35 @@ async function getWeatherForCity(city) {
     }
 
     const location = locations[0];
-    const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
-    forecastUrl.search = new URLSearchParams({
-        lat: String(location.lat),
-        lon: String(location.lon),
+    return getWeatherForCoordinates(location.lat, location.lon, location);
+}
+
+// City searches and map pins use the same forecast steps here.
+async function getWeatherForCoordinates(lat, lon, location) {
+    const currentUrl = new URL("https://api.openweathermap.org/data/2.5/weather");
+    currentUrl.search = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
         units: "metric",
         appid: apiKey
     });
-    const forecast = await getOpenWeatherJson(forecastUrl);
+    const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
+    forecastUrl.search = new URLSearchParams({
+        lat: String(lat),
+        lon: String(lon),
+        units: "metric",
+        appid: apiKey
+    });
+    // Both requests use the same coordinates, so start them together.
+    const [current, forecast] = await Promise.all([
+        getOpenWeatherJson(currentUrl),
+        getOpenWeatherJson(forecastUrl)
+    ]);
+    const timezoneOffset = forecast.city.timezone || 0;
     // Make daily summaries, then keep today separate from the next three days.
     const dailySummaries = makeDailySummaries(
         forecast.list,
-        forecast.city.timezone || 0
+        timezoneOffset
     );
     const today = dailySummaries[0];
     const days = dailySummaries.slice(1, 4);
@@ -115,8 +166,8 @@ async function getWeatherForCity(city) {
     try {
         const airUrl = new URL("https://api.openweathermap.org/data/2.5/air_pollution");
         airUrl.search = new URLSearchParams({
-            lat: String(location.lat),
-            lon: String(location.lon),
+            lat: String(lat),
+            lon: String(lon),
             appid: apiKey
         });
         const airData = await getOpenWeatherJson(airUrl);
@@ -134,6 +185,16 @@ async function getWeatherForCity(city) {
             state: location.state || "",
             country: location.country || ""
         },
+        coordinates: {
+            lat,
+            lon
+        },
+        currentWeather: {
+            temperature: current.main.temp,
+            conditionDescription: current.weather[0].description,
+            icon: current.weather[0].icon
+        },
+        mapSummary: makeMapSummary(forecast.list, timezoneOffset),
         today,
         days,
         packing: makePackingAdvice(days),
@@ -142,73 +203,43 @@ async function getWeatherForCity(city) {
     };
 }
 
-function formatCityName(city) {
-    return [city.name, city.state, city.country].filter(Boolean).join(", ");
-}
-
-// Fewer rainy days wins. If they tie, the city with more Mild days wins.
-function makeCityComparison(destinations) {
-    const cityStats = destinations.map((destination) => {
-        const days = destination.days;
-        return {
-            averageTemperature:
-                days.reduce((total, day) => total + day.averageTemperature, 0) / days.length,
-            rainDays: days.filter((day) => day.rainExpected).length,
-            mildDays: days.filter((day) => day.temperatureCategory === "Mild").length,
-            aqi: destination.airQuality.available ? destination.airQuality.aqi : null
-        };
-    });
-
-    let betterWeatherIndex = null;
-    if (cityStats[0].rainDays !== cityStats[1].rainDays) {
-        betterWeatherIndex = cityStats[0].rainDays < cityStats[1].rainDays ? 0 : 1;
-    } else if (cityStats[0].mildDays !== cityStats[1].mildDays) {
-        betterWeatherIndex = cityStats[0].mildDays > cityStats[1].mildDays ? 0 : 1;
-    }
-
-    let worseAirIndex = null;
-    if (
-        cityStats[0].aqi !== null &&
-        cityStats[1].aqi !== null &&
-        cityStats[0].aqi !== cityStats[1].aqi
-    ) {
-        worseAirIndex = cityStats[0].aqi > cityStats[1].aqi ? 0 : 1;
-    }
-
-    const cityNames = destinations.map((destination) => formatCityName(destination.city));
-    const weatherVerdict = betterWeatherIndex === null
-        ? "Neither forecast has a clear weather advantage"
-        : cityNames[betterWeatherIndex] + " has the better forecast";
-
-    let umbrellaVerdict;
-    if (cityStats[0].rainDays && cityStats[1].rainDays) {
-        umbrellaVerdict = "Both cities may need an umbrella";
-    } else if (cityStats[0].rainDays) {
-        umbrellaVerdict = cityNames[0] + " may need an umbrella";
-    } else if (cityStats[1].rainDays) {
-        umbrellaVerdict = cityNames[1] + " may need an umbrella";
-    } else {
-        umbrellaVerdict = "Neither city is forecast to have rain";
-    }
-
-    let airVerdict;
-    if (cityStats[0].aqi === null || cityStats[1].aqi === null) {
-        airVerdict = "Air quality is unavailable for comparison";
-    } else if (worseAirIndex === null) {
-        airVerdict = "Both cities have the same AQI";
-    } else {
-        airVerdict = cityNames[worseAirIndex] + " has worse air quality";
-    }
+// Find the next forecast period with a good chance of rain for the map card.
+function makeMapSummary(readings, timezoneOffset) {
+    const now = Math.floor(Date.now() / 1000);
+    const nextThreeDays = (readings || []).filter(
+        (reading) => reading.dt >= now && reading.dt <= now + 3 * 24 * 60 * 60
+    );
+    // Only call it likely when the forecast gives it at least a 50% chance.
+    const nextRain = nextThreeDays.find((reading) => (reading.pop || 0) >= 0.5);
 
     return {
-        metrics: cityStats,
-        temperatureDifference: Math.abs(
-            cityStats[0].averageTemperature - cityStats[1].averageTemperature
-        ),
-        betterWeatherIndex,
-        worseAirIndex,
-        verdict: [weatherVerdict, umbrellaVerdict, airVerdict].join(". ") + "."
+        timezoneOffset,
+        nextRain: nextRain
+            ? {
+                time: nextRain.dt,
+                chance: Math.round((nextRain.pop || 0) * 100)
+            }
+            : null
     };
+}
+
+// Reverse geocoding is only used for the place name shown beside the pin.
+async function getLocationForCoordinates(lat, lon) {
+    try {
+        const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/reverse");
+        locationUrl.search = new URLSearchParams({
+            lat: String(lat),
+            lon: String(lon),
+            limit: "1",
+            appid: apiKey
+        });
+        const locations = await getOpenWeatherJson(locationUrl);
+        if (locations.length) return locations[0];
+    } catch {
+        // A nearby place name is helpful, but the coordinates are enough for a forecast.
+    }
+
+    return { name: "Pinned location", state: "", country: "" };
 }
 
 async function getOpenWeatherJson(url) {
@@ -381,82 +412,28 @@ app.listen(port, host, () => {
     console.log("Weather planner running at http://localhost:" + port);
 });
 
-server-first-iteration.js
-// This is a small version of server.js, just to show the request flow.
-// Run it with: node --env-file=.env server-first-iteration.js
 
-// Express lets us make routes for the browser to call.
-const express = require("express");
+package.json
 
-const app = express();
+{
+  "name": "assignment-1-weather-planner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A simple Vue and Express weather planner for Internet Applications Assignment 1",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file=.env server.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "express": "^4.21.2" }
+}
 
-// Node reads the key from .env when the server starts.
-// The browser does not get the key.
-const apiKey = process.env.OPENWEATHER_API_KEY;
-
-// Use a different port so this can run alongside server.js.
-const port = 3001;
-
-// Try http://localhost:3001/api/weather?city=Dublin
-// req is the request; res is how we send the reply.
-// async lets this function wait for OpenWeather with await.
-app.get("/api/weather", async (req, res) => {
-    // The city is in the URL, after ?city=.
-    const city = req.query.city;
-
-    // Look up the city's coordinates first.
-    const locationUrl = new URL("https://api.openweathermap.org/geo/1.0/direct");
-
-    // These are added after the ? in the URL.
-    // q is the city, limit asks for one match, appid is the key.
-    locationUrl.search = new URLSearchParams({
-        q: city,
-        limit: "1",
-        appid: apiKey
-    });
-
-    // fetch sends the request and .json() reads the reply.
-    const locationResponse = await fetch(locationUrl);
-    const locations = await locationResponse.json();
-
-    // Geocoding returns a list. We asked for one result, so use the first one.
-    const location = locations[0];
-
-    // The forecast request needs the latitude and longitude.
-    const forecastUrl = new URL("https://api.openweathermap.org/data/2.5/forecast");
-
-    // units=metric gives temperatures in Celsius.
-    forecastUrl.search = new URLSearchParams({
-        lat: location.lat,
-        lon: location.lon,
-        units: "metric",
-        appid: apiKey
-    });
-
-    const forecastResponse = await fetch(forecastUrl);
-    const forecastData = await forecastResponse.json();
-
-    // The list has readings every three hours. Keep only what the page needs.
-    const readings = forecastData.list.map((reading) => ({
-        // dt_txt is the time, main.temp is the temperature, and description is the weather.
-        time: reading.dt_txt,
-        temperature: reading.main.temp,
-        description: reading.weather[0].description
-    }));
-
-    // Send the shorter version back to the browser.
-    res.json({
-        city: location.name,
-        readings
-    });
-});
-
-// Start the server so it can receive requests.
-app.listen(port, () => {
-    console.log("Simple example server running at http://localhost:" + port);
-});
 
 public/app.js
+
+let weatherMap = null;
+let weatherMarker = null;
+
 const app = Vue.createApp({
     data() {
         return {
@@ -464,10 +441,14 @@ const app = Vue.createApp({
             weatherData: null,
             error: "",
             loading: false,
-            comparisonCity: "",
-            comparisonData: null,
-            comparisonError: "",
-            comparing: false
+            pinRequestInProgress: false,
+            pinLoading: false,
+            mapLoading: false,
+            mapError: "",
+            mapLayers: {
+                precipitation: true,
+                temperature: true
+            }
         };
     },
     computed: {
@@ -478,15 +459,16 @@ const app = Vue.createApp({
     methods: {
         async searchWeather() {
             const cityName = this.city.trim();
-            if (!cityName || this.loading || this.comparing) {
+            if (!cityName || this.loading || this.pinRequestInProgress) {
                 return;
             }
 
+            this.removeMap();
             this.loading = true;
             this.error = "";
             this.weatherData = null;
-            this.comparisonData = null;
-            this.comparisonError = "";
+            this.mapLoading = false;
+            this.mapError = "";
 
             try {
                 // Ask our server for the weather in this city.
@@ -496,6 +478,46 @@ const app = Vue.createApp({
                 this.error = requestError.message;
             } finally {
                 this.loading = false;
+                if (this.weatherData) {
+                    await this.$nextTick();
+                    await this.showWeatherMap();
+                }
+            }
+        },
+        async searchAtPoint(lat, lon) {
+            if (this.loading || this.pinRequestInProgress) return;
+
+            this.pinRequestInProgress = true;
+            this.mapError = "";
+            let loadingStartedAt = 0;
+            const loadingTimer = window.setTimeout(() => {
+                this.pinLoading = true;
+                loadingStartedAt = Date.now();
+            }, 180);
+
+            try {
+                const query = new URLSearchParams({
+                    lat: String(lat),
+                    lon: String(lon)
+                });
+                const response = await fetch("/api/weather-at?" + query);
+                this.weatherData = await this.readJsonResponse(response);
+
+                if (weatherMarker) {
+                    weatherMarker.setLngLat([lon, lat]);
+                }
+            } catch (requestError) {
+                this.mapError = "Could not load a forecast for that point. " + requestError.message;
+            } finally {
+                window.clearTimeout(loadingTimer);
+                if (loadingStartedAt) {
+                    const remainingTime = 250 - (Date.now() - loadingStartedAt);
+                    if (remainingTime > 0) {
+                        await new Promise((resolve) => window.setTimeout(resolve, remainingTime));
+                    }
+                }
+                this.pinLoading = false;
+                this.pinRequestInProgress = false;
             }
         },
         formatCityName(city) {
@@ -515,29 +537,125 @@ const app = Vue.createApp({
             }
             return responseData;
         },
-        async compareCities() {
-            const secondCity = this.comparisonCity.trim();
-            if (!this.weatherData || !secondCity || this.comparing || this.loading) {
+        removeMap() {
+            if (weatherMap) {
+                weatherMap.remove();
+                weatherMap = null;
+                weatherMarker = null;
+            }
+        },
+        setMapLayerVisibility(layerId, isVisible) {
+            if (weatherMap && weatherMap.getLayer(layerId)) {
+                weatherMap.setLayoutProperty(
+                    layerId,
+                    "visibility",
+                    isVisible ? "visible" : "none"
+                );
+            }
+        },
+        async showWeatherMap() {
+            if (!window.mapboxgl) {
+                this.mapError = "The map library could not be loaded.";
                 return;
             }
 
-            this.comparing = true;
-            this.comparisonError = "";
-            this.comparisonData = null;
-
-            // Add each city separately, so a comma in a country code stays in the name.
-            const cityParams = new URLSearchParams();
-            cityParams.append("cities", this.cityLabel);
-            cityParams.append("cities", secondCity);
+            const { lat, lon } = this.weatherData.coordinates;
+            const mapboxgl = window.mapboxgl;
+            this.mapLoading = true;
+            this.mapError = "";
 
             try {
-                const response = await fetch("/api/compare?" + cityParams.toString());
-                this.comparisonData = await this.readJsonResponse(response);
-            } catch (requestError) {
-                this.comparisonError = requestError.message;
-            } finally {
-                this.comparing = false;
+                const response = await fetch("/api/config");
+                const config = await this.readJsonResponse(response);
+                if (!config.mapboxToken) {
+                    throw new Error("The Mapbox token is missing. Add it to .env and restart the server.");
+                }
+                mapboxgl.accessToken = config.mapboxToken;
+            } catch (error) {
+                this.mapLoading = false;
+                this.mapError = error.message;
+                return;
             }
+
+            const map = new mapboxgl.Map({
+                container: "weather-map",
+                style: "mapbox://styles/mapbox/standard",
+                center: [lon, lat],
+                zoom: 6.5
+            });
+            weatherMap = map;
+
+            map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+            weatherMarker = new mapboxgl.Marker({ color: "#326b84" })
+                .setLngLat([lon, lat])
+                .addTo(map);
+
+            map.on("click", (event) => {
+                this.searchAtPoint(event.lngLat.lat, event.lngLat.lng);
+            });
+
+            map.once("load", () => {
+                if (weatherMap !== map) return;
+
+                map.addSource("temperature", {
+                    type: "raster",
+                    tiles: ["/api/weather-map/temp_new/{z}/{x}/{y}.png"],
+                    tileSize: 256,
+                    maxzoom: 18,
+                    attribution: "© OpenWeather"
+                });
+                map.addSource("precipitation", {
+                    type: "raster",
+                    tiles: ["/api/weather-map/precipitation_new/{z}/{x}/{y}.png"],
+                    tileSize: 256,
+                    maxzoom: 18,
+                    attribution: "© OpenWeather"
+                });
+
+                map.addLayer({
+                    id: "temperature-layer",
+                    type: "raster",
+                    source: "temperature",
+                    slot: "middle",
+                    layout: {
+                        visibility: this.mapLayers.temperature ? "visible" : "none"
+                    },
+                    paint: {
+                        "raster-opacity": 0.4,
+                        "raster-contrast": 0.3,
+                        "raster-saturation": 0.2,
+                        "raster-fade-duration": 0
+                    }
+                });
+                map.addLayer({
+                    id: "precipitation-layer",
+                    type: "raster",
+                    source: "precipitation",
+                    slot: "middle",
+                    layout: {
+                        visibility: this.mapLayers.precipitation ? "visible" : "none"
+                    },
+                    paint: {
+                        "raster-opacity": 0.78,
+                        "raster-contrast": 0.3,
+                        "raster-saturation": 0.2,
+                        "raster-fade-duration": 0
+                    }
+                });
+                this.mapLoading = false;
+            });
+
+            map.on("error", (event) => {
+                if (weatherMap !== map) return;
+                if (
+                    !map.isStyleLoaded() ||
+                    event.sourceId === "precipitation" ||
+                    event.sourceId === "temperature"
+                ) {
+                    this.mapLoading = false;
+                    this.mapError = "The map or a weather layer could not be loaded.";
+                }
+            });
         },
         formatDate(dateString, short = false) {
             const date = new Date(dateString + "T12:00:00Z");
@@ -589,13 +707,28 @@ const app = Vue.createApp({
                 return "<0.1";
             }
             return this.formatNumber(value);
+        },
+        formatForecastTime(timestamp, timezoneOffset) {
+            const localDate = new Date((timestamp + timezoneOffset) * 1000);
+            const day = new Intl.DateTimeFormat("en-IE", {
+                weekday: "short",
+                timeZone: "UTC"
+            }).format(localDate);
+            const time = new Intl.DateTimeFormat("en-IE", {
+                hour: "numeric",
+                hourCycle: "h12",
+                timeZone: "UTC"
+            }).format(localDate);
+            return day + " at " + time;
         }
     }
 });
 
 app.mount("#app");
 
+
 public/index.html
+
 <!doctype html>
 <html lang="en">
   <head>
@@ -612,14 +745,16 @@ public/index.html
       href="https://fonts.googleapis.com/css2?family=Karla:wght@400;500;600;700&display=swap"
       rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.32.0/mapbox-gl.css" rel="stylesheet">
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js" defer></script>
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.32.0/mapbox-gl.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
     <div id="app">
       <div class="weather-shell">
         <aside class="side-panel">
-          <form class="search-form" @submit.prevent="searchWeather" :aria-busy="loading">
+          <form class="search-form" @submit.prevent="searchWeather" :aria-busy="loading || pinRequestInProgress">
             <label for="city">Search for a city</label>
             <input
               id="city"
@@ -631,7 +766,7 @@ public/index.html
               placeholder="Dublin, IE"
               aria-describedby="city-hint"
               required>
-            <button type="submit" :disabled="loading || comparing || !city.trim()">Search</button>
+            <button type="submit" :disabled="loading || pinRequestInProgress || !city.trim()">Search</button>
             <p id="city-hint" class="search-hint">
               Add a country code if the city name is shared.
             </p>
@@ -695,7 +830,7 @@ public/index.html
             <p>Your temperature, wind, rainfall and air-quality details will appear here.</p>
           </section>
 
-          <div v-if="weatherData && !loading" class="weather-results">
+          <div v-if="weatherData" class="weather-results">
             <section class="forecast-section" aria-labelledby="forecast-title">
               <div class="section-heading">
                 <h1 id="forecast-title">Three-day forecast</h1>
@@ -795,131 +930,90 @@ public/index.html
               </section>
             </div>
 
-            <section class="comparison-section" aria-labelledby="comparison-title">
-              <div class="comparison-heading">
-                <h2 id="comparison-title">Compare another city</h2>
-                <p>See how its next three days compare.</p>
+            <section class="map-section" aria-labelledby="map-title">
+              <div class="section-heading">
+                <h2 id="map-title">Weather map</h2>
               </div>
-
-              <form class="comparison-form" @submit.prevent="compareCities" :aria-busy="comparing">
-                <label for="comparison-city">Second destination</label>
-                <div class="comparison-input-row">
-                  <input
-                    id="comparison-city"
-                    v-model.trim="comparisonCity"
-                    type="search"
-                    name="comparisonCity"
-                    maxlength="100"
-                    autocomplete="off"
-                    placeholder="Lisbon, PT"
-                    required>
-                  <button type="submit" :disabled="comparing || !comparisonCity.trim()">
-                    {{ comparing ? "Comparing..." : "Compare" }}
-                  </button>
-                </div>
-                <p class="search-hint">Add a country code if the city name is shared.</p>
-              </form>
-
-              <p v-if="comparing" class="comparison-message" aria-live="polite">
-                Loading both forecasts...
+              <p v-if="mapLoading" class="map-message" aria-live="polite">
+                Loading map...
               </p>
-              <p v-if="comparisonError" class="comparison-message comparison-error" role="alert">
-                {{ comparisonError }}
+              <p v-if="mapError" class="map-message map-error" role="status">
+                {{ mapError }}
               </p>
-
-              <div v-if="comparisonData" class="comparison-results">
-                <div class="comparison-verdict">
-                  <h3>Weather verdict</h3>
-                  <p aria-live="polite">{{ comparisonData.comparison.verdict }}</p>
-                  <span>
-                    Average temperatures differ by
-                    {{ formatTemperature(comparisonData.comparison.temperatureDifference) }}.
-                  </span>
+              <div class="weather-map-frame">
+                <div
+                  id="weather-map"
+                  class="weather-map"
+                  :class="{ 'weather-map-hidden': pinLoading }"
+                  :aria-hidden="pinLoading"
+                  role="region"
+                  :aria-label="'Weather map around ' + cityLabel"
+                ></div>
+                <div v-if="!pinLoading" class="map-layer-legend" role="group" aria-label="Map layers">
+                  <span class="map-layer-legend-title">Layers</span>
+                  <div class="map-layer-controls">
+                    <label class="map-layer-option">
+                      <input
+                        v-model="mapLayers.precipitation"
+                        type="checkbox"
+                        @change="setMapLayerVisibility('precipitation-layer', mapLayers.precipitation)">
+                      <span class="layer-swatch precipitation-swatch" aria-hidden="true"></span>
+                      <span>Precipitation</span>
+                    </label>
+                    <label class="map-layer-option">
+                      <input
+                        v-model="mapLayers.temperature"
+                        type="checkbox"
+                        @change="setMapLayerVisibility('temperature-layer', mapLayers.temperature)">
+                      <span class="layer-swatch temperature-swatch" aria-hidden="true"></span>
+                      <span>Temperature</span>
+                    </label>
+                  </div>
                 </div>
-
-                <p
-                  v-if="
-                    !comparisonData.destinations[0].hasThreeDays ||
-                    !comparisonData.destinations[1].hasThreeDays
-                  "
-                  class="notice comparison-notice"
+                <div
+                  v-if="weatherData && !pinLoading && (mapLayers.temperature || mapLayers.precipitation)"
+                  class="map-weather-legend"
+                  role="group"
+                  aria-label="Weather at the selected map point"
+                  aria-live="polite"
                 >
-                  One city has fewer than three forecast days available. The available days are shown.
-                </p>
-
-                <div class="comparison-grid">
-                  <article
-                    v-for="(destination, index) in comparisonData.destinations"
-                    :key="destination.city.name + destination.city.country + index"
-                    class="comparison-card"
-                    :class="{
-                      'comparison-card-winner':
-                        index === comparisonData.comparison.betterWeatherIndex
-                    }"
-                  >
-                    <div class="comparison-card-heading">
-                      <h3>{{ formatCityName(destination.city) }}</h3>
-                      <span
-                        v-if="index === comparisonData.comparison.betterWeatherIndex"
-                        class="winner-label"
-                      >
-                        Better forecast
+                  <div v-if="mapLayers.temperature" class="map-current-reading">
+                    <svg class="map-current-icon" viewBox="0 0 128 128" aria-hidden="true">
+                      <use :href="'/weather-icons.svg#' + weatherIcon(weatherData.currentWeather.icon)"></use>
+                    </svg>
+                    <div class="map-reading-copy">
+                      <span class="map-reading-label">Current weather</span>
+                      <strong class="map-current-temperature">
+                        {{ formatTemperature(weatherData.currentWeather.temperature) }}
+                      </strong>
+                      <span class="map-current-condition">
+                        {{ weatherData.currentWeather.conditionDescription }}
                       </span>
                     </div>
-
-                    <dl class="comparison-metrics">
-                      <div>
-                        <dt>Average temperature</dt>
-                        <dd>
-                          {{ formatTemperature(comparisonData.comparison.metrics[index].averageTemperature) }}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Rainy days</dt>
-                        <dd>
-                          {{ comparisonData.comparison.metrics[index].rainDays }} /
-                          {{ destination.days.length }}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Air quality</dt>
-                        <dd v-if="destination.airQuality.available">
-                          {{ destination.airQuality.aqiLabel }} · AQI {{ destination.airQuality.aqi }}/5
-                          <span
-                            v-if="index === comparisonData.comparison.worseAirIndex"
-                            class="worse-air-label"
-                          >
-                            Worse
-                          </span>
-                        </dd>
-                        <dd v-else>Unavailable</dd>
-                      </div>
-                    </dl>
-
-                    <ul class="comparison-days" :aria-label="formatCityName(destination.city) + ' forecast'">
-                      <li v-for="day in destination.days" :key="day.date">
-                        <span class="comparison-day-date">{{ formatDate(day.date, true) }}</span>
-                        <svg
-                          class="weather-icon"
-                          viewBox="0 0 128 128"
-                          width="40"
-                          height="40"
-                          aria-hidden="true"
-                        >
-                          <use :href="'/weather-icons.svg#' + weatherIcon(day.icon)"></use>
-                        </svg>
-                        <span class="comparison-day-condition">{{ day.conditionDescription }}</span>
-                        <span class="comparison-day-temperature">
-                          {{ formatTemperature(day.minTemperature) }} –
-                          {{ formatTemperature(day.maxTemperature) }}
+                  </div>
+                  <div v-if="mapLayers.precipitation" class="map-rain-reading">
+                    <span class="layer-swatch precipitation-swatch" aria-hidden="true"></span>
+                    <div class="map-reading-copy">
+                      <span class="map-reading-label">Next likely rain</span>
+                      <template v-if="weatherData.mapSummary.nextRain">
+                        <strong class="map-rain-time">
+                          {{ formatForecastTime(
+                            weatherData.mapSummary.nextRain.time,
+                            weatherData.mapSummary.timezoneOffset
+                          ) }}
+                        </strong>
+                        <span class="map-rain-chance">
+                          {{ weatherData.mapSummary.nextRain.chance }}% chance
                         </span>
-                        <span class="comparison-day-details">
-                          {{ formatNumber(day.averageWindSpeed) }} m/s wind ·
-                          {{ formatRainfall(day.rainfall) }} mm rain
-                        </span>
-                      </li>
-                    </ul>
-                  </article>
+                      </template>
+                      <span v-else class="map-no-rain">
+                        No likely rain in the next 3 days
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="pinLoading" class="weather-map-placeholder" role="status" aria-live="polite">
+                  Updating the forecast for this spot...
                 </div>
               </div>
             </section>
@@ -930,7 +1024,9 @@ public/index.html
   </body>
 </html>
 
+
 public/style.css
+
 /* Main colours and default text */
 :root {
   color-scheme: light;
@@ -1341,244 +1437,221 @@ button {
   margin-top: 28px;
 }
 
-/* The second city comparison */
-.comparison-section {
+.map-section {
   margin-top: 32px;
 }
 
-.comparison-heading {
-  margin-bottom: 16px;
+.map-section .section-heading {
+  margin-bottom: 5px;
 }
 
-.comparison-heading h2 {
+.map-section h2 {
   margin: 0;
   font-size: 24px;
   font-weight: 600;
 }
 
-.comparison-heading p {
-  margin: 3px 0 0;
+.map-message {
+  margin: 0 0 10px;
   color: var(--muted);
   font-size: 15px;
 }
 
-.comparison-form {
+.map-layer-controls {
+  display: grid;
+  gap: 7px;
+}
+
+.map-layer-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
   display: grid;
   gap: 8px;
-  max-width: 560px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 10px rgba(22, 48, 58, 0.16);
 }
 
-.comparison-form label {
-  font-size: 16px;
+.map-layer-legend-title {
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.comparison-input-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.comparison-input-row input {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--tile);
-  color: var(--ink);
-}
-
-.comparison-input-row input::placeholder {
-  color: var(--muted);
-  opacity: 1;
-}
-
-.comparison-input-row input:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.comparison-input-row button {
-  min-height: 44px;
-  padding: 9px 17px;
-  border: 0;
-  border-radius: 5px;
-  background: var(--blue);
-  color: white;
+.map-layer-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 16px;
-  font-weight: 600;
 }
 
-.comparison-input-row button:hover:not(:disabled) {
-  background: #105a84;
+.layer-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
-.comparison-input-row button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.precipitation-swatch {
+  background: #258ac4;
 }
 
-.comparison-form .search-hint {
-  font-size: 14px;
+.temperature-swatch {
+  background: linear-gradient(135deg, #39a7d5 0 35%, #f0bd45 36% 68%, #e66d4c 69%);
 }
 
-.comparison-message {
-  margin: 14px 0 0;
-  color: var(--muted);
-  font-size: 15px;
+.map-layer-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--blue);
 }
 
-.comparison-error {
+.map-error {
   color: var(--red);
 }
 
-.comparison-results {
-  margin-top: 22px;
+.weather-map-frame {
+  position: relative;
+  height: 400px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #dceaf0;
 }
 
-.comparison-verdict {
-  margin-bottom: 18px;
+.weather-map {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
 }
 
-.comparison-verdict h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
+.weather-map-frame .mapboxgl-ctrl-attrib,
+.weather-map-frame .mapboxgl-ctrl-attrib-inner {
+  font-size: 9px !important;
+  line-height: 1.2 !important;
 }
 
-.comparison-verdict p {
-  margin: 3px 0 0;
-  font-size: 18px;
-  font-weight: 600;
+.weather-map-frame .mapboxgl-ctrl-attrib {
+  padding: 2px 4px;
 }
 
-.comparison-verdict span {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 15px;
-}
-
-.comparison-notice {
-  margin-top: 0;
-}
-
-.comparison-grid {
+.map-weather-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  z-index: 3;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 11px;
+  width: min(250px, calc(100% - 24px));
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 12px rgba(22, 48, 58, 0.18);
 }
 
-.comparison-card {
-  min-width: 0;
-  padding: 20px 22px;
-  border-radius: 13px;
-  background: var(--tile);
-}
-
-.comparison-card-heading {
+.map-current-reading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.comparison-card-heading h3 {
-  min-width: 0;
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.map-current-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
 }
 
-.comparison-card-winner .comparison-card-heading h3 {
-  color: var(--blue);
-}
-
-.winner-label {
-  flex: 0 0 auto;
-  color: var(--blue);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.comparison-metrics {
+.map-reading-copy {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 16px 0 12px;
-}
-
-.comparison-metrics div {
+  gap: 2px;
   min-width: 0;
 }
 
-.comparison-metrics dt {
+.map-reading-label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.comparison-metrics dd {
-  margin: 2px 0 0;
-  font-size: 15px;
-  font-weight: 600;
+.map-current-temperature {
+  color: var(--ink);
+  font-size: 23px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 
-.worse-air-label {
-  display: block;
-  color: var(--amber);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.comparison-days {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.comparison-days li {
-  display: grid;
-  grid-template-columns: 48px 38px minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 1px 9px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.comparison-day-date {
+.map-current-condition,
+.map-rain-chance {
   color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.comparison-days .weather-icon {
-  display: block;
-  width: 38px;
-  height: 38px;
-}
-
-.comparison-day-condition {
-  min-width: 0;
-  font-size: 15px;
+  font-size: 13px;
   text-transform: capitalize;
 }
 
-.comparison-day-temperature {
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+.map-rain-reading {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
-.comparison-day-details {
-  grid-column: 3 / 5;
-  color: var(--muted);
-  font-size: 13px;
+.map-rain-reading .layer-swatch {
+  margin-top: 4px;
+}
+
+.map-rain-time,
+.map-no-rain {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.weather-map-hidden {
+  visibility: hidden;
+}
+
+.weather-map-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  background: #dceaf0;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.weather-map-placeholder::before {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: map-loading-spin 0.8s linear infinite;
+  content: "";
+}
+
+@keyframes map-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weather-map-placeholder::before {
+    animation: none;
+  }
 }
 
 /* Put the cards in one column on smaller screens */
@@ -1587,9 +1660,6 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .comparison-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .packing-section,
@@ -1803,63 +1873,21 @@ button {
     text-align: left;
   }
 
-  .comparison-section {
+  .map-section {
     margin-top: 26px;
   }
-
-  .comparison-input-row {
-    grid-template-columns: minmax(0, 1fr);
+  .weather-map {
+    height: 100%;
   }
 
-  .comparison-metrics {
-    gap: 6px;
-  }
-
-  .comparison-metrics dt {
-    font-size: 12px;
-  }
-
-  .comparison-metrics dd {
-    font-size: 14px;
-  }
-
-  .comparison-days li {
-    grid-template-columns: 42px 34px minmax(0, 1fr);
-    gap: 1px 7px;
-  }
-
-  .comparison-days .weather-icon {
-    width: 34px;
-    height: 34px;
-  }
-
-  .comparison-day-date {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .comparison-days .weather-icon {
-    grid-column: 2;
-    grid-row: 1 / 4;
-  }
-
-  .comparison-day-condition {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .comparison-day-temperature {
-    grid-column: 3;
-    grid-row: 2;
-  }
-
-  .comparison-day-details {
-    grid-column: 3;
-    grid-row: 3;
+  .weather-map-frame {
+    height: 300px;
   }
 }
 
+
 public/weather-icons.svg
+
 <svg xmlns="http://www.w3.org/2000/svg">
   <symbol id="sun" viewBox="0 0 128 128">
     <g fill="none" stroke="#D8B247" stroke-linecap="round" stroke-width="6">
@@ -1918,7 +1946,9 @@ public/weather-icons.svg
   </symbol>
 </svg>
 
+
 public/api-docs.html
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -1942,7 +1972,9 @@ public/api-docs.html
 </body>
 </html>
 
+
 public/openapi.json
+
 {
   "openapi": "3.0.3",
   "info": {
@@ -1960,60 +1992,164 @@ public/openapi.json
             "in": "query",
             "required": true,
             "description": "City name, optionally followed by a country code.",
-            "schema": { "type": "string", "example": "Dublin, IE" }
+            "schema": {
+              "type": "string",
+              "example": "Dublin, IE"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Weather, packing advice and current air quality for the city.",
+            "description": "Current weather, forecast, packing advice and air quality for the city.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/WeatherResult" }
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherResult"
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "404": { "$ref": "#/components/responses/CityNotFound" },
-          "500": { "$ref": "#/components/responses/MissingApiKey" },
-          "502": { "$ref": "#/components/responses/WeatherServiceError" },
-          "default": { "$ref": "#/components/responses/OtherError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/CityNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/MissingApiKey"
+          },
+          "502": {
+            "$ref": "#/components/responses/WeatherServiceError"
+          },
+          "default": {
+            "$ref": "#/components/responses/OtherError"
+          }
         }
       }
     },
-    "/api/compare": {
+    "/api/weather-at": {
       "get": {
-        "summary": "Compare the forecasts for two cities",
+        "summary": "Get the forecast for a map point",
+        "description": "Uses the clicked coordinates for current weather, forecast and air-quality lookups, and reverse geocoding for the nearby place name.",
         "parameters": [
           {
-            "name": "cities",
+            "name": "lat",
             "in": "query",
             "required": true,
-            "description": "Enter exactly two cities. Repeat the parameter to allow commas in country codes.",
-            "style": "form",
-            "explode": true,
             "schema": {
-              "type": "array",
-              "minItems": 2,
-              "maxItems": 2,
-              "items": { "type": "string" },
-              "example": ["Dublin", "Lisbon"]
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "example": 53.3498
+            }
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "example": -6.2603
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Both city forecasts and their comparison.",
+            "description": "Current weather, forecast, packing advice and air quality for the selected point.",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/CompareResult" }
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherResult"
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "404": { "$ref": "#/components/responses/CityNotFound" },
-          "500": { "$ref": "#/components/responses/MissingApiKey" },
-          "502": { "$ref": "#/components/responses/WeatherServiceError" },
-          "default": { "$ref": "#/components/responses/OtherError" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/MissingApiKey"
+          },
+          "502": {
+            "$ref": "#/components/responses/WeatherServiceError"
+          },
+          "default": {
+            "$ref": "#/components/responses/OtherError"
+          }
+        }
+      }
+    },
+    "/api/weather-map/{layer}/{z}/{x}/{y}.png": {
+      "get": {
+        "summary": "Get a weather map tile",
+        "description": "Express fetches a temperature or precipitation tile from OpenWeather so the OpenWeather API key stays on the server.",
+        "parameters": [
+          {
+            "name": "layer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["precipitation_new", "temp_new"]
+            }
+          },
+          {
+            "name": "z",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18
+            }
+          },
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "description": "Tile column. Must be less than 2 to the power of z.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "description": "Tile row. Must be less than 2 to the power of z.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A PNG tile for the requested weather layer.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The layer name or tile coordinates are invalid."
+          },
+          "500": {
+            "description": "The server does not have an OpenWeather API key."
+          },
+          "502": {
+            "description": "The server could not fetch the tile from OpenWeather."
+          },
+          "default": {
+            "description": "OpenWeather returned an error status for this tile."
+          }
         }
       }
     }
@@ -2022,118 +2158,208 @@ public/openapi.json
     "schemas": {
       "ApiError": {
         "type": "object",
-        "properties": { "error": { "type": "string" } }
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
       },
       "City": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "state": { "type": "string" },
-          "country": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          }
+        }
+      },
+      "CurrentWeather": {
+        "type": "object",
+        "properties": {
+          "temperature": {
+            "type": "number"
+          },
+          "conditionDescription": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          }
         }
       },
       "DaySummary": {
         "type": "object",
         "properties": {
-          "date": { "type": "string", "format": "date" },
-          "icon": { "type": "string" },
-          "conditionDescription": { "type": "string" },
-          "minTemperature": { "type": "number" },
-          "maxTemperature": { "type": "number" },
-          "averageTemperature": { "type": "number" },
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "conditionDescription": {
+            "type": "string"
+          },
+          "minTemperature": {
+            "type": "number"
+          },
+          "maxTemperature": {
+            "type": "number"
+          },
+          "averageTemperature": {
+            "type": "number"
+          },
           "temperatureCategory": {
             "type": "string",
-            "enum": ["Cold", "Mild", "Hot"]
+            "enum": [
+              "Cold",
+              "Mild",
+              "Hot"
+            ]
           },
-          "averageWindSpeed": { "type": "number" },
-          "rainfall": { "type": "number" },
-          "rainExpected": { "type": "boolean" }
+          "averageWindSpeed": {
+            "type": "number"
+          },
+          "rainfall": {
+            "type": "number"
+          },
+          "rainExpected": {
+            "type": "boolean"
+          }
         }
       },
       "PackingAdvice": {
         "type": "object",
         "properties": {
-          "umbrellaNeeded": { "type": "boolean" },
-          "umbrellaAdvice": { "type": "string" },
-          "temperatureAdvice": { "type": "string" }
+          "umbrellaNeeded": {
+            "type": "boolean"
+          },
+          "umbrellaAdvice": {
+            "type": "string"
+          },
+          "temperatureAdvice": {
+            "type": "string"
+          }
         }
       },
       "PollutantWarning": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "value": { "type": "number" },
-          "category": { "type": "string" },
-          "healthRisk": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          },
+          "category": {
+            "type": "string"
+          },
+          "healthRisk": {
+            "type": "string"
+          }
         }
       },
       "AirQuality": {
         "type": "object",
-        "required": ["available"],
+        "required": [
+          "available"
+        ],
         "properties": {
-          "available": { "type": "boolean" },
-          "message": { "type": "string" },
-          "aqi": { "type": "integer", "nullable": true },
-          "aqiLabel": { "type": "string" },
+          "available": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "aqi": {
+            "type": "integer",
+            "nullable": true
+          },
+          "aqiLabel": {
+            "type": "string"
+          },
           "warnings": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/PollutantWarning" }
+            "items": {
+              "$ref": "#/components/schemas/PollutantWarning"
+            }
           }
         }
       },
       "WeatherResult": {
         "type": "object",
         "properties": {
-          "city": { "$ref": "#/components/schemas/City" },
-          "today": { "$ref": "#/components/schemas/DaySummary" },
+          "city": {
+            "$ref": "#/components/schemas/City"
+          },
+          "currentWeather": {
+            "$ref": "#/components/schemas/CurrentWeather"
+          },
+          "today": {
+            "$ref": "#/components/schemas/DaySummary"
+          },
           "days": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/DaySummary" }
+            "items": {
+              "$ref": "#/components/schemas/DaySummary"
+            }
           },
-          "packing": { "$ref": "#/components/schemas/PackingAdvice" },
-          "airQuality": { "$ref": "#/components/schemas/AirQuality" },
-          "hasThreeDays": { "type": "boolean" }
-        }
-      },
-      "CityMetrics": {
-        "type": "object",
-        "properties": {
-          "averageTemperature": { "type": "number" },
-          "rainDays": { "type": "integer" },
-          "mildDays": { "type": "integer" },
-          "aqi": { "type": "integer", "nullable": true }
-        }
-      },
-      "CityComparison": {
-        "type": "object",
-        "properties": {
-          "metrics": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/CityMetrics" }
+          "packing": {
+            "$ref": "#/components/schemas/PackingAdvice"
           },
-          "temperatureDifference": { "type": "number" },
-          "betterWeatherIndex": { "type": "integer", "nullable": true },
-          "worseAirIndex": { "type": "integer", "nullable": true },
-          "verdict": { "type": "string" }
-        }
-      },
-      "CompareResult": {
-        "type": "object",
-        "properties": {
-          "destinations": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/WeatherResult" }
+          "airQuality": {
+            "$ref": "#/components/schemas/AirQuality"
           },
-          "comparison": { "$ref": "#/components/schemas/CityComparison" }
+          "hasThreeDays": {
+            "type": "boolean"
+          },
+          "coordinates": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number"
+              },
+              "lon": {
+                "type": "number"
+              }
+            }
+          },
+          "mapSummary": {
+            "type": "object",
+            "properties": {
+              "timezoneOffset": {
+                "type": "integer"
+              },
+              "nextRain": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "time": {
+                    "type": "integer"
+                  },
+                  "chance": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
     "responses": {
       "BadRequest": {
-        "description": "A required city name is missing or invalid.",
+        "description": "A required query parameter is missing or invalid.",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiError" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -2141,7 +2367,9 @@ public/openapi.json
         "description": "OpenWeather could not find one of the requested cities.",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiError" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -2149,7 +2377,9 @@ public/openapi.json
         "description": "The server does not have an OpenWeather API key.",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiError" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -2157,7 +2387,9 @@ public/openapi.json
         "description": "The server could not connect to OpenWeather or did not receive enough forecast data.",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiError" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -2165,7 +2397,9 @@ public/openapi.json
         "description": "Another error returned by OpenWeather.",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiError" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       }

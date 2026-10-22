@@ -1,3 +1,6 @@
+let weatherMap = null;
+let weatherMarker = null;
+
 const app = Vue.createApp({
     data() {
         return {
@@ -5,10 +8,14 @@ const app = Vue.createApp({
             weatherData: null,
             error: "",
             loading: false,
-            comparisonCity: "",
-            comparisonData: null,
-            comparisonError: "",
-            comparing: false
+            pinRequestInProgress: false,
+            pinLoading: false,
+            mapLoading: false,
+            mapError: "",
+            mapLayers: {
+                precipitation: true,
+                temperature: true
+            }
         };
     },
     computed: {
@@ -19,15 +26,16 @@ const app = Vue.createApp({
     methods: {
         async searchWeather() {
             const cityName = this.city.trim();
-            if (!cityName || this.loading || this.comparing) {
+            if (!cityName || this.loading || this.pinRequestInProgress) {
                 return;
             }
 
+            this.removeMap();
             this.loading = true;
             this.error = "";
             this.weatherData = null;
-            this.comparisonData = null;
-            this.comparisonError = "";
+            this.mapLoading = false;
+            this.mapError = "";
 
             try {
                 // Ask our server for the weather in this city.
@@ -37,6 +45,46 @@ const app = Vue.createApp({
                 this.error = requestError.message;
             } finally {
                 this.loading = false;
+                if (this.weatherData) {
+                    await this.$nextTick();
+                    await this.showWeatherMap();
+                }
+            }
+        },
+        async searchAtPoint(lat, lon) {
+            if (this.loading || this.pinRequestInProgress) return;
+
+            this.pinRequestInProgress = true;
+            this.mapError = "";
+            let loadingStartedAt = 0;
+            const loadingTimer = window.setTimeout(() => {
+                this.pinLoading = true;
+                loadingStartedAt = Date.now();
+            }, 180);
+
+            try {
+                const query = new URLSearchParams({
+                    lat: String(lat),
+                    lon: String(lon)
+                });
+                const response = await fetch("/api/weather-at?" + query);
+                this.weatherData = await this.readJsonResponse(response);
+
+                if (weatherMarker) {
+                    weatherMarker.setLngLat([lon, lat]);
+                }
+            } catch (requestError) {
+                this.mapError = "Could not load a forecast for that point. " + requestError.message;
+            } finally {
+                window.clearTimeout(loadingTimer);
+                if (loadingStartedAt) {
+                    const remainingTime = 250 - (Date.now() - loadingStartedAt);
+                    if (remainingTime > 0) {
+                        await new Promise((resolve) => window.setTimeout(resolve, remainingTime));
+                    }
+                }
+                this.pinLoading = false;
+                this.pinRequestInProgress = false;
             }
         },
         formatCityName(city) {
@@ -56,29 +104,125 @@ const app = Vue.createApp({
             }
             return responseData;
         },
-        async compareCities() {
-            const secondCity = this.comparisonCity.trim();
-            if (!this.weatherData || !secondCity || this.comparing || this.loading) {
+        removeMap() {
+            if (weatherMap) {
+                weatherMap.remove();
+                weatherMap = null;
+                weatherMarker = null;
+            }
+        },
+        setMapLayerVisibility(layerId, isVisible) {
+            if (weatherMap && weatherMap.getLayer(layerId)) {
+                weatherMap.setLayoutProperty(
+                    layerId,
+                    "visibility",
+                    isVisible ? "visible" : "none"
+                );
+            }
+        },
+        async showWeatherMap() {
+            if (!window.mapboxgl) {
+                this.mapError = "The map library could not be loaded.";
                 return;
             }
 
-            this.comparing = true;
-            this.comparisonError = "";
-            this.comparisonData = null;
-
-            // Add each city separately, so a comma in a country code stays in the name.
-            const cityParams = new URLSearchParams();
-            cityParams.append("cities", this.cityLabel);
-            cityParams.append("cities", secondCity);
+            const { lat, lon } = this.weatherData.coordinates;
+            const mapboxgl = window.mapboxgl;
+            this.mapLoading = true;
+            this.mapError = "";
 
             try {
-                const response = await fetch("/api/compare?" + cityParams.toString());
-                this.comparisonData = await this.readJsonResponse(response);
-            } catch (requestError) {
-                this.comparisonError = requestError.message;
-            } finally {
-                this.comparing = false;
+                const response = await fetch("/api/config");
+                const config = await this.readJsonResponse(response);
+                if (!config.mapboxToken) {
+                    throw new Error("The Mapbox token is missing. Add it to .env and restart the server.");
+                }
+                mapboxgl.accessToken = config.mapboxToken;
+            } catch (error) {
+                this.mapLoading = false;
+                this.mapError = error.message;
+                return;
             }
+
+            const map = new mapboxgl.Map({
+                container: "weather-map",
+                style: "mapbox://styles/mapbox/standard",
+                center: [lon, lat],
+                zoom: 6.5
+            });
+            weatherMap = map;
+
+            map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
+            weatherMarker = new mapboxgl.Marker({ color: "#326b84" })
+                .setLngLat([lon, lat])
+                .addTo(map);
+
+            map.on("click", (event) => {
+                this.searchAtPoint(event.lngLat.lat, event.lngLat.lng);
+            });
+
+            map.once("load", () => {
+                if (weatherMap !== map) return;
+
+                map.addSource("temperature", {
+                    type: "raster",
+                    tiles: ["/api/weather-map/temp_new/{z}/{x}/{y}.png"],
+                    tileSize: 256,
+                    maxzoom: 18,
+                    attribution: "© OpenWeather"
+                });
+                map.addSource("precipitation", {
+                    type: "raster",
+                    tiles: ["/api/weather-map/precipitation_new/{z}/{x}/{y}.png"],
+                    tileSize: 256,
+                    maxzoom: 18,
+                    attribution: "© OpenWeather"
+                });
+
+                map.addLayer({
+                    id: "temperature-layer",
+                    type: "raster",
+                    source: "temperature",
+                    slot: "middle",
+                    layout: {
+                        visibility: this.mapLayers.temperature ? "visible" : "none"
+                    },
+                    paint: {
+                        "raster-opacity": 0.4,
+                        "raster-contrast": 0.3,
+                        "raster-saturation": 0.2,
+                        "raster-fade-duration": 0
+                    }
+                });
+                map.addLayer({
+                    id: "precipitation-layer",
+                    type: "raster",
+                    source: "precipitation",
+                    slot: "middle",
+                    layout: {
+                        visibility: this.mapLayers.precipitation ? "visible" : "none"
+                    },
+                    paint: {
+                        "raster-opacity": 0.78,
+                        "raster-contrast": 0.3,
+                        "raster-saturation": 0.2,
+                        "raster-fade-duration": 0
+                    }
+                });
+                this.mapLoading = false;
+            });
+
+            map.on("error", (event) => {
+                if (weatherMap !== map) return;
+                if (
+                    !map.isStyleLoaded() ||
+                    event.sourceId === "precipitation" ||
+                    event.sourceId === "temperature"
+                ) {
+                    this.mapLoading = false;
+                    this.mapError = "The map or a weather layer could not be loaded.";
+                }
+            });
         },
         formatDate(dateString, short = false) {
             const date = new Date(dateString + "T12:00:00Z");
@@ -130,6 +274,19 @@ const app = Vue.createApp({
                 return "<0.1";
             }
             return this.formatNumber(value);
+        },
+        formatForecastTime(timestamp, timezoneOffset) {
+            const localDate = new Date((timestamp + timezoneOffset) * 1000);
+            const day = new Intl.DateTimeFormat("en-IE", {
+                weekday: "short",
+                timeZone: "UTC"
+            }).format(localDate);
+            const time = new Intl.DateTimeFormat("en-IE", {
+                hour: "numeric",
+                hourCycle: "h12",
+                timeZone: "UTC"
+            }).format(localDate);
+            return day + " at " + time;
         }
     }
 });

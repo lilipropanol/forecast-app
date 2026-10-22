@@ -408,244 +408,221 @@ button {
   margin-top: 28px;
 }
 
-/* The second city comparison */
-.comparison-section {
+.map-section {
   margin-top: 32px;
 }
 
-.comparison-heading {
-  margin-bottom: 16px;
+.map-section .section-heading {
+  margin-bottom: 5px;
 }
 
-.comparison-heading h2 {
+.map-section h2 {
   margin: 0;
   font-size: 24px;
   font-weight: 600;
 }
 
-.comparison-heading p {
-  margin: 3px 0 0;
+.map-message {
+  margin: 0 0 10px;
   color: var(--muted);
   font-size: 15px;
 }
 
-.comparison-form {
+.map-layer-controls {
+  display: grid;
+  gap: 7px;
+}
+
+.map-layer-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
   display: grid;
   gap: 8px;
-  max-width: 560px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 10px rgba(22, 48, 58, 0.16);
 }
 
-.comparison-form label {
-  font-size: 16px;
+.map-layer-legend-title {
+  color: var(--muted);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.comparison-input-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
-.comparison-input-row input {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--tile);
-  color: var(--ink);
-}
-
-.comparison-input-row input::placeholder {
-  color: var(--muted);
-  opacity: 1;
-}
-
-.comparison-input-row input:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.comparison-input-row button {
-  min-height: 44px;
-  padding: 9px 17px;
-  border: 0;
-  border-radius: 5px;
-  background: var(--blue);
-  color: white;
+.map-layer-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 16px;
-  font-weight: 600;
 }
 
-.comparison-input-row button:hover:not(:disabled) {
-  background: #105a84;
+.layer-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
-.comparison-input-row button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.precipitation-swatch {
+  background: #258ac4;
 }
 
-.comparison-form .search-hint {
-  font-size: 14px;
+.temperature-swatch {
+  background: linear-gradient(135deg, #39a7d5 0 35%, #f0bd45 36% 68%, #e66d4c 69%);
 }
 
-.comparison-message {
-  margin: 14px 0 0;
-  color: var(--muted);
-  font-size: 15px;
+.map-layer-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--blue);
 }
 
-.comparison-error {
+.map-error {
   color: var(--red);
 }
 
-.comparison-results {
-  margin-top: 22px;
+.weather-map-frame {
+  position: relative;
+  height: 400px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #dceaf0;
 }
 
-.comparison-verdict {
-  margin-bottom: 18px;
+.weather-map {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
 }
 
-.comparison-verdict h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 600;
+.weather-map-frame .mapboxgl-ctrl-attrib,
+.weather-map-frame .mapboxgl-ctrl-attrib-inner {
+  font-size: 9px !important;
+  line-height: 1.2 !important;
 }
 
-.comparison-verdict p {
-  margin: 3px 0 0;
-  font-size: 18px;
-  font-weight: 600;
+.weather-map-frame .mapboxgl-ctrl-attrib {
+  padding: 2px 4px;
 }
 
-.comparison-verdict span {
-  display: block;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 15px;
-}
-
-.comparison-notice {
-  margin-top: 0;
-}
-
-.comparison-grid {
+.map-weather-legend {
+  position: absolute;
+  right: 12px;
+  bottom: 28px;
+  z-index: 3;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 11px;
+  width: min(250px, calc(100% - 24px));
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 12px rgba(22, 48, 58, 0.18);
 }
 
-.comparison-card {
-  min-width: 0;
-  padding: 20px 22px;
-  border-radius: 13px;
-  background: var(--tile);
-}
-
-.comparison-card-heading {
+.map-current-reading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.comparison-card-heading h3 {
-  min-width: 0;
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  overflow-wrap: anywhere;
+.map-current-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
 }
 
-.comparison-card-winner .comparison-card-heading h3 {
-  color: var(--blue);
-}
-
-.winner-label {
-  flex: 0 0 auto;
-  color: var(--blue);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.comparison-metrics {
+.map-reading-copy {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin: 16px 0 12px;
-}
-
-.comparison-metrics div {
+  gap: 2px;
   min-width: 0;
 }
 
-.comparison-metrics dt {
+.map-reading-label {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.comparison-metrics dd {
-  margin: 2px 0 0;
-  font-size: 15px;
-  font-weight: 600;
+.map-current-temperature {
+  color: var(--ink);
+  font-size: 23px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.1;
 }
 
-.worse-air-label {
-  display: block;
-  color: var(--amber);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.comparison-days {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.comparison-days li {
-  display: grid;
-  grid-template-columns: 48px 38px minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 1px 9px;
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
-}
-
-.comparison-day-date {
+.map-current-condition,
+.map-rain-chance {
   color: var(--muted);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.comparison-days .weather-icon {
-  display: block;
-  width: 38px;
-  height: 38px;
-}
-
-.comparison-day-condition {
-  min-width: 0;
-  font-size: 15px;
+  font-size: 13px;
   text-transform: capitalize;
 }
 
-.comparison-day-temperature {
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+.map-rain-reading {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
-.comparison-day-details {
-  grid-column: 3 / 5;
-  color: var(--muted);
-  font-size: 13px;
+.map-rain-reading .layer-swatch {
+  margin-top: 4px;
+}
+
+.map-rain-time,
+.map-no-rain {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.weather-map-hidden {
+  visibility: hidden;
+}
+
+.weather-map-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  background: #dceaf0;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.weather-map-placeholder::before {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: map-loading-spin 0.8s linear infinite;
+  content: "";
+}
+
+@keyframes map-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weather-map-placeholder::before {
+    animation: none;
+  }
 }
 
 /* Put the cards in one column on smaller screens */
@@ -654,9 +631,6 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .comparison-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .packing-section,
@@ -870,58 +844,14 @@ button {
     text-align: left;
   }
 
-  .comparison-section {
+  .map-section {
     margin-top: 26px;
   }
-
-  .comparison-input-row {
-    grid-template-columns: minmax(0, 1fr);
+  .weather-map {
+    height: 100%;
   }
 
-  .comparison-metrics {
-    gap: 6px;
-  }
-
-  .comparison-metrics dt {
-    font-size: 12px;
-  }
-
-  .comparison-metrics dd {
-    font-size: 14px;
-  }
-
-  .comparison-days li {
-    grid-template-columns: 42px 34px minmax(0, 1fr);
-    gap: 1px 7px;
-  }
-
-  .comparison-days .weather-icon {
-    width: 34px;
-    height: 34px;
-  }
-
-  .comparison-day-date {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .comparison-days .weather-icon {
-    grid-column: 2;
-    grid-row: 1 / 4;
-  }
-
-  .comparison-day-condition {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .comparison-day-temperature {
-    grid-column: 3;
-    grid-row: 2;
-  }
-
-  .comparison-day-details {
-    grid-column: 3;
-    grid-row: 3;
+  .weather-map-frame {
+    height: 300px;
   }
 }

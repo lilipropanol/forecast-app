@@ -1,0 +1,431 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Weather Planner API",
+    "version": "1.0.0",
+    "description": "Endpoints used by the weather app."
+  },
+  "paths": {
+    "/api/weather": {
+      "get": {
+        "summary": "Get the forecast for one city",
+        "parameters": [
+          {
+            "name": "city",
+            "in": "query",
+            "required": true,
+            "description": "City name, optionally followed by a country code.",
+            "schema": {
+              "type": "string",
+              "example": "Dublin, IE"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current weather, forecast, packing advice and air quality for the city.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/CityNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/MissingApiKey"
+          },
+          "502": {
+            "$ref": "#/components/responses/WeatherServiceError"
+          },
+          "default": {
+            "$ref": "#/components/responses/OtherError"
+          }
+        }
+      }
+    },
+    "/api/weather-at": {
+      "get": {
+        "summary": "Get the forecast for a map point",
+        "description": "Uses the clicked coordinates for current weather, forecast and air-quality lookups, and reverse geocoding for the nearby place name.",
+        "parameters": [
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "example": 53.3498
+            }
+          },
+          {
+            "name": "lon",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "example": -6.2603
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current weather, forecast, packing advice and air quality for the selected point.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/MissingApiKey"
+          },
+          "502": {
+            "$ref": "#/components/responses/WeatherServiceError"
+          },
+          "default": {
+            "$ref": "#/components/responses/OtherError"
+          }
+        }
+      }
+    },
+    "/api/weather-map/{layer}/{z}/{x}/{y}.png": {
+      "get": {
+        "summary": "Get a weather map tile",
+        "description": "Express fetches a temperature or precipitation tile from OpenWeather so the OpenWeather API key stays on the server.",
+        "parameters": [
+          {
+            "name": "layer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["precipitation_new", "temp_new"]
+            }
+          },
+          {
+            "name": "z",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18
+            }
+          },
+          {
+            "name": "x",
+            "in": "path",
+            "required": true,
+            "description": "Tile column. Must be less than 2 to the power of z.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "y",
+            "in": "path",
+            "required": true,
+            "description": "Tile row. Must be less than 2 to the power of z.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A PNG tile for the requested weather layer.",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The layer name or tile coordinates are invalid."
+          },
+          "500": {
+            "description": "The server does not have an OpenWeather API key."
+          },
+          "502": {
+            "description": "The server could not fetch the tile from OpenWeather."
+          },
+          "default": {
+            "description": "OpenWeather returned an error status for this tile."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "City": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          }
+        }
+      },
+      "CurrentWeather": {
+        "type": "object",
+        "properties": {
+          "temperature": {
+            "type": "number"
+          },
+          "conditionDescription": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          }
+        }
+      },
+      "DaySummary": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "conditionDescription": {
+            "type": "string"
+          },
+          "minTemperature": {
+            "type": "number"
+          },
+          "maxTemperature": {
+            "type": "number"
+          },
+          "averageTemperature": {
+            "type": "number"
+          },
+          "temperatureCategory": {
+            "type": "string",
+            "enum": [
+              "Cold",
+              "Mild",
+              "Hot"
+            ]
+          },
+          "averageWindSpeed": {
+            "type": "number"
+          },
+          "rainfall": {
+            "type": "number"
+          },
+          "rainExpected": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PackingAdvice": {
+        "type": "object",
+        "properties": {
+          "umbrellaNeeded": {
+            "type": "boolean"
+          },
+          "umbrellaAdvice": {
+            "type": "string"
+          },
+          "temperatureAdvice": {
+            "type": "string"
+          }
+        }
+      },
+      "PollutantWarning": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number"
+          },
+          "category": {
+            "type": "string"
+          },
+          "healthRisk": {
+            "type": "string"
+          }
+        }
+      },
+      "AirQuality": {
+        "type": "object",
+        "required": [
+          "available"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "aqi": {
+            "type": "integer",
+            "nullable": true
+          },
+          "aqiLabel": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollutantWarning"
+            }
+          }
+        }
+      },
+      "WeatherResult": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "$ref": "#/components/schemas/City"
+          },
+          "currentWeather": {
+            "$ref": "#/components/schemas/CurrentWeather"
+          },
+          "today": {
+            "$ref": "#/components/schemas/DaySummary"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DaySummary"
+            }
+          },
+          "packing": {
+            "$ref": "#/components/schemas/PackingAdvice"
+          },
+          "airQuality": {
+            "$ref": "#/components/schemas/AirQuality"
+          },
+          "hasThreeDays": {
+            "type": "boolean"
+          },
+          "coordinates": {
+            "type": "object",
+            "properties": {
+              "lat": {
+                "type": "number"
+              },
+              "lon": {
+                "type": "number"
+              }
+            }
+          },
+          "mapSummary": {
+            "type": "object",
+            "properties": {
+              "timezoneOffset": {
+                "type": "integer"
+              },
+              "nextRain": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "time": {
+                    "type": "integer"
+                  },
+                  "chance": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "A required query parameter is missing or invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "CityNotFound": {
+        "description": "OpenWeather could not find one of the requested cities.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "MissingApiKey": {
+        "description": "The server does not have an OpenWeather API key.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "WeatherServiceError": {
+        "description": "The server could not connect to OpenWeather or did not receive enough forecast data.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "OtherError": {
+        "description": "Another error returned by OpenWeather.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    }
+  }
+}
